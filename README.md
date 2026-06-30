@@ -52,12 +52,22 @@ warren status                         # show tunnel state
 > issues a voucher, which you apply with `warren account redeem`. Restore an
 > existing account on a new machine with `warren warren mnemonic import "<12 words>"`.
 
-Full walkthrough: [`docs/INSTALL-SERVER.md`](docs/INSTALL-SERVER.md).
+## Install
+
+```bash
+# Linux server (resolves the latest daemon-v* release and installs it):
+curl -fsSL https://raw.githubusercontent.com/WarrenBrowse/warren-cli/main/scripts/install.sh | sudo sh
+```
+
+While the repos are private the download needs GitHub auth (`gh auth login` on the
+host, or `sudo GH_TOKEN=<token> sh`). Full walkthrough incl. macOS/Windows:
+[`docs/INSTALL-SERVER.md`](docs/INSTALL-SERVER.md).
 
 ## Building the packages
 
-The real Linux packages are produced by CI (`.github/workflows/release.yml`) on
-Linux runners. Locally:
+The real packages are produced by **warren-app**'s `release-daemon.yml` workflow on
+the self-hosted runners (this repo's `.github/workflows/ci.yml` only lints).
+Locally on a Linux host:
 
 ```bash
 # On a Linux host → dist/warren-vpn-daemon_<ver>_<arch>.deb (+ .rpm):
@@ -97,8 +107,11 @@ Cut a release by pushing a `daemon-v*` tag in `warren-app`. See
 
 - ✅ `warren` + `warren-daemon` build standalone (no Electron) and run — validated.
 - ✅ Mullvad→Warren CLI branding (`warren --version` → `warren x.y.z`).
-- ✅ Linux `.deb` / `.rpm`, macOS tarball, Windows zip — CI in `warren-app`.
-- 🚧 First published release + signing/notarization — pending.
+- ✅ CI green on all three OSes; Linux `.deb`/`.rpm`, macOS tarball, Windows zip.
+- ✅ First release published:
+  [`daemon-v1.2.1`](https://github.com/WarrenBrowse/warren-app/releases/tag/daemon-v1.2.1)
+  (clean `1.2.1`, all four artifacts).
+- 🚧 Signing / notarization — pending (artifacts are unsigned, like the GUI).
 - ⏸️ Windows system-VPN tunnel is untested upstream; control-plane works.
 
 ## License
