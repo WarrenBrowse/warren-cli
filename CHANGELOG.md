@@ -33,13 +33,18 @@ Bugs found and fixed while bringing the headless pipeline up:
 - RPM versions forbid `-`; dev builds carry `-dev-<sha>` → `build.sh` maps `-`→`~`
   for the rpm version.
 
-Validated artifacts (run `daemon-v1.2.1-rc4`):
-- `warren-vpn-daemon_<ver>_amd64.deb` — inspected: `/usr/bin/{warren,warren-daemon,
+First clean release built from `main` (`daemon-v1.2.1`) — clean `1.2.1` version
+(no `-dev` suffix): a `daemon-vX.Y.Z` tag now creates a local `v<ver>` tag at
+build time so `mullvad-version` drops the suffix, without pushing `v<ver>` (so the
+GUI `release.yml` is not triggered).
+
+Validated artifacts:
+- `warren-vpn-daemon_1.2.1_amd64.deb` — inspected: `/usr/bin/{warren,warren-daemon,
   warren-exclude}`, `warren-daemon.service`, resources, shell completions;
   `Conflicts: warren-vpn`; `Description: Warren VPN daemon …`.
-- `warren-vpn-daemon_<ver>_x86_64.rpm`
+- `warren-vpn-daemon_1.2.1_x86_64.rpm` — inspected: same payload.
 - `warren-headless-macos-arm64.tar.gz` — inspected: binaries + resources +
-  launchd installer; CI-built `warren --version` → `warren <ver>`.
+  launchd installer; CI-built `warren --version` → `warren 1.2.1`.
 - `warren-headless-windows-x64.zip`
 
 ### Notes
