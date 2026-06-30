@@ -17,10 +17,34 @@ itself lives in [`warren-app`](https://github.com/WarrenBrowse/warren-app).
   - `windows/install-windows.ps1` — Windows service installer (experimental).
   - `.github/workflows/ci.yml` — shellcheck + PSScriptAnalyzer lint.
 - In `warren-app` (branch `warren-cli-headless`):
-  - CLI branding: `warren --version` → `warren <ver>`; rebranded help title.
+  - CLI branding: `warren --version` → `warren <ver>`; rebranded help title and
+    `.deb`/`.rpm` package description.
   - `.github/workflows/release-daemon.yml` — headless release pipeline
     (Linux `.deb`/`.rpm`, macOS tarball, Windows zip) on the self-hosted runners.
 
+### CI pipeline brought to green (validated on the self-hosted runners)
+Bugs found and fixed while bringing the headless pipeline up:
+- Linux runner lacked `cargo-deb` / `cargo-generate-rpm` → installed in the job.
+- `build.sh | tee` masked failures (no `pipefail`) → added `set -o pipefail`.
+- Windows `winfw` was built Debug while the release link wanted
+  `x64-Release/winfw.lib` (LNK1181) → forced `CPP_BUILD_MODES=Release`.
+- `cargo deb` rejects a `description` key in `[package.metadata.deb]` →
+  use the package description + `extended-description`.
+- RPM versions forbid `-`; dev builds carry `-dev-<sha>` → `build.sh` maps `-`→`~`
+  for the rpm version.
+
+Validated artifacts (run `daemon-v1.2.1-rc4`):
+- `warren-vpn-daemon_<ver>_amd64.deb` — inspected: `/usr/bin/{warren,warren-daemon,
+  warren-exclude}`, `warren-daemon.service`, resources, shell completions;
+  `Conflicts: warren-vpn`; `Description: Warren VPN daemon …`.
+- `warren-vpn-daemon_<ver>_x86_64.rpm`
+- `warren-headless-macos-arm64.tar.gz` — inspected: binaries + resources +
+  launchd installer; CI-built `warren --version` → `warren <ver>`.
+- `warren-headless-windows-x64.zip`
+
 ### Notes
-- The Warren QUIC tunnel is validated on Linux and macOS; Windows is experimental.
+- The Warren QUIC tunnel is validated on Linux and macOS; Windows is experimental
+  (builds and packages, tunnel untested upstream).
 - Artifacts are unsigned until signing/notarization accounts exist.
+- The `daemon-v*` tags are dev/rc builds (`<ver>` = `1.2.1-dev-<sha>`); cut a clean
+  `1.2.1` release by stamping `dist-assets/desktop-product-version.txt` and tagging.
