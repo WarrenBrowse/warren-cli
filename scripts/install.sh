@@ -10,9 +10,9 @@
 
 set -eu
 
-# Where releases are published. Override if artifacts live on warren-app:
-#   REPO=WarrenBrowse/warren-app sh install.sh
-REPO="${REPO:-WarrenBrowse/warren-cli}"
+# Where the headless `daemon-v*` releases are published (currently warren-app,
+# where the CI runs). Override with REPO=… if you mirror them elsewhere.
+REPO="${REPO:-WarrenBrowse/warren-app}"
 err() { printf '\033[0;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
 info() { printf '\033[0;34m[info]\033[0m %s\n' "$*"; }
 
@@ -42,22 +42,41 @@ else
     esac
     [ "$PKG" = deb ] && ARCH="$DEB_ARCH" || ARCH="$RPM_ARCH"
 
+    # Headless releases are tagged `daemon-v<ver>` (distinct from the GUI `v<ver>`
+    # releases that also live on warren-app). While the repo is private, the
+    # GitHub CLI (`gh`, authenticated) is the reliable path; for a public repo a
+    # token-less curl works too. An optional GH_TOKEN/GITHUB_TOKEN authenticates curl.
+    GHTOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+    USE_GH=0
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then USE_GH=1; fi
+
     # --- resolve release tag -------------------------------------------------
     if [ -n "${VERSION:-}" ]; then
-        TAG="v${VERSION#v}"
+        TAG="daemon-v${VERSION#v}"
+    elif [ "$USE_GH" -eq 1 ]; then
+        info "resolving latest headless release via gh..."
+        TAG="$(gh release list -R "$REPO" --limit 100 --json tagName -q '.[].tagName' 2>/dev/null \
+                 | grep '^daemon-v' | head -n1)"
     else
-        info "resolving latest release..."
-        TAG="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-                 | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)"
-        [ -n "$TAG" ] || err "no published release yet. Build locally: see docs/INSTALL-SERVER.md (Option B)."
+        info "resolving latest headless release..."
+        TAG="$(curl -fsSL ${GHTOKEN:+-H "Authorization: Bearer $GHTOKEN"} \
+                 "https://api.github.com/repos/$REPO/releases?per_page=50" \
+                 | sed -n 's/.*"tag_name": *"\(daemon-v[^"]*\)".*/\1/p' | head -n1)"
     fi
-    VER="${TAG#v}"
-    ASSET="warren-vpn-daemon_${VER}_${ARCH}.${PKG}"
-    URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
+    [ -n "$TAG" ] || err "no published headless release found. Build locally: see docs/INSTALL-SERVER.md (Option B)."
 
+    VER="${TAG#daemon-v}"
+    ASSET="warren-vpn-daemon_${VER}_${ARCH}.${PKG}"
     PKG_FILE="$(mktemp -d)/$ASSET"
-    info "downloading $ASSET ..."
-    curl -fSL "$URL" -o "$PKG_FILE" || err "download failed: $URL"
+    info "downloading $ASSET ($TAG) ..."
+    if [ "$USE_GH" -eq 1 ]; then
+        gh release download "$TAG" -R "$REPO" -p "$ASSET" -O "$PKG_FILE" \
+            || err "download failed for $ASSET in $TAG"
+    else
+        URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
+        curl -fSL ${GHTOKEN:+-H "Authorization: Bearer $GHTOKEN"} "$URL" -o "$PKG_FILE" \
+            || err "download failed: $URL (private repo? install gh + 'gh auth login', or set GH_TOKEN)"
+    fi
 fi
 
 # --- install -----------------------------------------------------------------

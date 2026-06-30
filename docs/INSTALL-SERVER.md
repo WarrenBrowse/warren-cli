@@ -32,8 +32,14 @@ sudo rpm -i warren-vpn-daemon_<version>_x86_64.rpm
 curl -fsSL https://raw.githubusercontent.com/WarrenBrowse/warren-cli/main/scripts/install.sh | sudo sh
 ```
 
-The package installs the binaries, drops the `warren-daemon` systemd unit, sets
-`WARREN_RESOURCE_DIR`, installs shell completions, and enables the service.
+It resolves the latest `daemon-v*` release, downloads the right `.deb`/`.rpm`,
+installs the binaries + `warren-daemon` systemd unit + resources + completions, and
+enables the service.
+
+> **While the repos are private** the download needs GitHub auth: install on a host
+> with `gh` logged in (`gh auth login`), or pass a token —
+> `curl -fsSL …/install.sh | sudo GH_TOKEN=<token> sh`. Once a release is made
+> public, the token-less one-liner works.
 
 ---
 
