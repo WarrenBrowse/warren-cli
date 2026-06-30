@@ -1,0 +1,34 @@
+---
+# Lint the distribution scripts. The actual headless artifacts (.deb/.rpm,
+# macOS tarball, Windows zip) are built by warren-app's `release-daemon.yml`
+# on the self-hosted runners; this repo only ships docs + install glue.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck -S warning scripts/*.sh macos/*.sh
+
+  powershell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          $issues = Invoke-ScriptAnalyzer -Path windows/ -Severity Error
+          if ($issues) { $issues | Format-Table; exit 1 }

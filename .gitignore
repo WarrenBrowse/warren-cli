@@ -1,0 +1,9 @@
+# build outputs / packages
+/dist/
+*.deb
+*.rpm
+target/
+
+# os / editor
+.DS_Store
+*.swp

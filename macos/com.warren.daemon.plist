@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.warren.daemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/warren-daemon</string>
+        <string>-vv</string>
+        <string>--disable-stdout-timestamps</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>WARREN_RESOURCE_DIR</key>
+        <string>/usr/local/share/warren/resources</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/warren-daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/warren-daemon.log</string>
+</dict>
+</plist>
