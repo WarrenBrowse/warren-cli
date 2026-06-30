@@ -2,6 +2,16 @@
 
 **The headless / server distribution of the Warren VPN command-line client.**
 
+## TL;DR — install in one command (Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/WarrenBrowse/warren-cli/main/scripts/install.sh | sudo sh
+```
+
+Then: `warren account create && warren connect`. (While this repo is private the
+download needs GitHub auth — `gh auth login` on the host, or
+`sudo GH_TOKEN=<token> sh`. Once public, the token-less line above just works.)
+
 Warren already ships a full-featured Rust CLI (`warren`) and a privileged daemon
 (`warren-daemon`) inside the [`warren-app`](../warren-app) repo (a Mullvad VPN
 fork). They build and run **without the Electron GUI** and are perfectly suited to

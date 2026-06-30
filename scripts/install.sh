@@ -10,9 +10,9 @@
 
 set -eu
 
-# Where the headless `daemon-v*` releases are published (currently warren-app,
-# where the CI runs). Override with REPO=… if you mirror them elsewhere.
-REPO="${REPO:-WarrenBrowse/warren-app}"
+# Where the headless `daemon-v*` releases live. The CI (in warren-app) publishes
+# the artifacts here, to the public-facing distribution repo. Override with REPO=…
+REPO="${REPO:-WarrenBrowse/warren-cli}"
 err() { printf '\033[0;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
 info() { printf '\033[0;34m[info]\033[0m %s\n' "$*"; }
 
