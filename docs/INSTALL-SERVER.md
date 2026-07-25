@@ -158,5 +158,7 @@ sudo apt-get remove warren-vpn-daemon         # or: sudo rpm -e warren-vpn-daemo
   group membership (inherited from the Mullvad model).
 - Tunnel is validated on **Linux and macOS**; Windows is untested for the Warren
   QUIC tunnel.
-- The IP/account observed at `api.warrenbrowse.com` is a **test network**; use a
-  subscribed test wallet only.
+- The daemon talks to `api.warrenbrowse.com` (prod channel) or
+  `api.beta.warrenbrowse.com` (beta channel), whichever `WARREN_PRODUCT_ENV` the
+  binary was built with (defaults to prod). Both are currently **test
+  networks**; use a subscribed test wallet only.

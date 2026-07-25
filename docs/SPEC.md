@@ -58,8 +58,12 @@ Three independent components; the CLI and GUI are **both just clients**:
 
 - **Identity**: BIP39 mnemonic → HKDF-SHA256 → Ed25519 → SS58 address (`wb…`).
   No account number, no email/password. The mnemonic *is* the account.
-- **Account API**: signed `https://api.warrenbrowse.com/v1/*` (Ed25519 request
-  signatures: `X-Warren-{PubKey,Sig,Timestamp,Nonce}`).
+- **Account API**: signed `https://api.warrenbrowse.com/v1/*` on the prod channel,
+  `https://api.beta.warrenbrowse.com/v1/*` on beta (Ed25519 request signatures:
+  `X-Warren-{PubKey,Sig,Timestamp,Nonce}`). The host is baked into the
+  `warren-app` binary at compile time via `WARREN_PRODUCT_ENV`, defaulting to
+  prod; `warren-cli` packages whatever binary `warren-app` produces and does not
+  select the channel itself.
 - **Credit**: buy on the website (Lightning / Monero / card / on-chain) → the
   backend issues a **voucher** → `warren account redeem <voucher>` extends the
   subscription (`expires_at`). The CLI and the desktop app share this exact flow;
