@@ -48,7 +48,7 @@ GUI-less counterpart.
 ```bash
 warren account create                 # generate identity (BIP39 mnemonic)
 warren warren mnemonic export         # back up the recovery phrase, keep it safe
-# buy credit on the Warren website (Lightning / Monero / card) -> you get a voucher
+# during the free beta, use the voucher you received; purchases open with the paid service
 warren account redeem <VOUCHER>       # add time to the account
 warren account get                    # show address + expiry
 warren relay list                     # browse available exits
@@ -57,9 +57,11 @@ warren connect                        # bring the tunnel up
 warren status                         # show tunnel state
 ```
 
-> Buying credit is a web-checkout flow (same as the desktop app): the website
-> issues a voucher, which you apply with `warren account redeem`. Restore an
-> existing account on a new machine with `warren warren mnemonic import "<12 words>"`.
+> Vouchers are how time reaches an account: apply one with `warren account
+> redeem`. During the free beta they are handed out by the team; once the paid
+> service opens, the web checkout issues them (Lightning / Monero / card, same
+> flow as the desktop app). Restore an existing account on a new machine with
+> `warren warren mnemonic import "<12 words>"`.
 
 ## Install
 
