@@ -1,8 +1,10 @@
 # Contributing to warren-cli
 
 `warren-cli` is a **distribution + docs** layer. It deliberately contains **no CLI
-source code** — the `warren` CLI and `warren-daemon` live in
-[`warren-app`](https://github.com/WarrenBrowse/warren-app) (a Mullvad VPN fork).
+source code**: the `warren` CLI and `warren-daemon` live in
+[warren-app](https://github.com/WarrenBrowse/warren-app) (a Mullvad VPN fork).
+The `warren-app`, `warren-core` and `warrenguard` repositories are not yet
+public, so changes routed there currently require access to them.
 Read [`docs/SPEC.md`](docs/SPEC.md) before contributing.
 
 ## Where to make a change
@@ -35,6 +37,6 @@ See [`docs/RELEASE.md`](docs/RELEASE.md): push a `daemon-v*` tag in `warren-app`
 
 ## Conventions
 
-- Keep this repo a thin wrapper — never fork CLI/daemon code here.
+- Keep this repo a thin wrapper: never fork CLI/daemon code here.
 - Commit messages: single subject line, no body.
 - Match the surrounding style in scripts and docs.

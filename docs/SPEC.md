@@ -1,11 +1,11 @@
-# Warren CLI — Specification & Decision Record
+# Warren CLI: Specification & Decision Record
 
 Status: **accepted** · Date: 2026-06-30 · Owner: poka
 
 ## 1. Goal
 
 Provide a robust, multi-platform, full-Rust way to use Warren entirely from the
-command line — create an account, add credit, browse servers, connect — on
+command line (create an account, add credit, browse servers, connect) on
 machines with no GUI (servers, containers, SSH).
 
 ## 2. Decision
@@ -109,10 +109,10 @@ sibling `warren-core`). macOS/Windows headless packaging is phase 2.
 `warren-cli` is a **distribution + release + docs** layer over the upstream
 `--daemon-only` path. It does not fork warren-app code. It provides:
 
-1. `docs/INSTALL-SERVER.md` — the missing server-install guide.
-2. `scripts/build-daemon-only.sh` — thin wrapper over `warren-app/build.sh`.
-3. `scripts/install.sh` — one-line installer (fetch package → install → enable).
-4. `.github/workflows/release.yml` — Linux CI producing the real artifacts.
+1. `docs/INSTALL-SERVER.md`: the missing server-install guide.
+2. `scripts/build-daemon-only.sh`: thin wrapper over `warren-app/build.sh`.
+3. `scripts/install.sh`: one-line installer (fetch package → install → enable).
+4. `.github/workflows/release.yml`: Linux CI producing the real artifacts.
 
 ## 7. Status & open items
 

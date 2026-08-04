@@ -54,7 +54,7 @@ check_pin() {
     want="$(tr -d '[:space:]' < "$pinfile")"
     have="$(git -C "$SIBLINGS_ROOT/$repo" rev-parse HEAD 2>/dev/null || echo '?')"
     if [[ "$have" != "$want" ]]; then
-        warn "$repo is at ${have:0:12}, warren-app pins ${want:0:12} — build may differ."
+        warn "$repo is at ${have:0:12}, warren-app pins ${want:0:12}, build may differ."
     fi
 }
 check_pin warren-core "$WARREN_APP_DIR/.warren-core-version"

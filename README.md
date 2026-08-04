@@ -2,24 +2,23 @@
 
 **The headless / server distribution of the Warren VPN command-line client.**
 
-## TL;DR — install in one command (Linux)
+## TL;DR: install in one command (Linux)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/WarrenBrowse/warren-cli/main/scripts/install.sh | sudo sh
 ```
 
-Then: `warren account create && warren connect`. (While this repo is private the
-download needs GitHub auth — `gh auth login` on the host, or
-`sudo GH_TOKEN=<token> sh`. Once public, the token-less line above just works.)
+Then: `warren account create && warren connect`.
 
 Warren already ships a full-featured Rust CLI (`warren`) and a privileged daemon
-(`warren-daemon`) inside the [`warren-app`](../warren-app) repo (a Mullvad VPN
+(`warren-daemon`) inside the
+[warren-app](https://github.com/WarrenBrowse/warren-app) repo (a Mullvad VPN
 fork). They build and run **without the Electron GUI** and are perfectly suited to
 servers, containers and SSH-only machines.
 
 This repo does **not** re-implement the CLI. It is the **distribution layer**:
 clear server-install docs, a release pipeline that produces ready-to-install
-packages, and a one-line installer — so an operator never has to compile ~900
+packages, and a one-line installer, so an operator never has to compile ~900
 crates themselves.
 
 > **Why not a new SDK-based CLI?** Because the existing `warren` CLI already does
@@ -41,14 +40,14 @@ A `warren-vpn-daemon` package (`.deb` / `.rpm`) containing:
 | `/opt/Warren VPN/resources/` | runtime resources (`ca.crt`, relay bootstrap, …) |
 | shell completions | bash / zsh / fish |
 
-The package `conflicts` with the desktop `warren-vpn` package — it is the
+The package `conflicts` with the desktop `warren-vpn` package: it is the
 GUI-less counterpart.
 
 ## Quick start (once a package is installed)
 
 ```bash
 warren account create                 # generate identity (BIP39 mnemonic)
-warren warren mnemonic export         # back up the recovery phrase — keep it safe
+warren warren mnemonic export         # back up the recovery phrase, keep it safe
 # buy credit on the Warren website (Lightning / Monero / card) -> you get a voucher
 warren account redeem <VOUCHER>       # add time to the account
 warren account get                    # show address + expiry
@@ -69,8 +68,8 @@ warren status                         # show tunnel state
 curl -fsSL https://raw.githubusercontent.com/WarrenBrowse/warren-cli/main/scripts/install.sh | sudo sh
 ```
 
-While the repos are private the download needs GitHub auth (`gh auth login` on the
-host, or `sudo GH_TOKEN=<token> sh`). Full walkthrough incl. macOS/Windows:
+The published Linux packages currently target amd64/x86_64 only; on an ARM
+server, build from source (see below). Full walkthrough incl. macOS/Windows:
 [`docs/INSTALL-SERVER.md`](docs/INSTALL-SERVER.md).
 
 ## Building the packages
@@ -88,12 +87,16 @@ TARGETS="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu" \
   ./scripts/build-daemon-only.sh
 ```
 
-The script drives [`warren-app/build.sh --daemon-only`](../warren-app/build.sh);
+The script drives `warren-app/build.sh --daemon-only`;
 warren-app is the single source of truth and is never forked here. Packaging must
 run on **Linux** (`warren-exclude` is Linux-only); from macOS, use the release CI
 or a Linux container.
 
 ### Build prerequisites
+
+Building from source requires access to the `warren-app`, `warren-core` and
+`warrenguard` repositories, which are not yet public. Until they are, the
+prebuilt packages above are the way to install.
 
 - A sibling `warren-app` checkout (override with `WARREN_APP_DIR`), plus its own
   siblings `warren-core` and `warrenguard` at the SHAs pinned in
@@ -106,22 +109,22 @@ or a Linux container.
 Headless artifacts are built by **warren-app**'s `release-daemon.yml` workflow on
 the self-hosted runners (it reuses the same build env as the GUI release):
 
-- **Linux** — `warren-vpn-daemon_<ver>_<arch>.deb` / `.rpm` (`build.sh --daemon-only`)
-- **macOS** — `warren-headless-macos-<arch>.tar.gz` (binaries + launchd installer)
-- **Windows** — `warren-headless-windows-x64.zip` (binaries + service installer, experimental)
+- **Linux**: `warren-vpn-daemon_<ver>_<arch>.deb` / `.rpm` (`build.sh --daemon-only`)
+- **macOS**: `warren-headless-macos-<arch>.tar.gz` (binaries + launchd installer)
+- **Windows**: `warren-headless-windows-x64.zip` (binaries + service installer, experimental)
 
 Cut a release by pushing a `daemon-v*` tag in `warren-app`. See
 [`docs/RELEASE.md`](docs/RELEASE.md).
 
 ## Status
 
-- ✅ `warren` + `warren-daemon` build standalone (no Electron) and run — validated.
+- ✅ `warren` + `warren-daemon` build standalone (no Electron) and run, validated.
 - ✅ Mullvad→Warren CLI branding (`warren --version` → `warren x.y.z`).
 - ✅ CI green on all three OSes; Linux `.deb`/`.rpm`, macOS tarball, Windows zip.
 - ✅ First release published:
-  [`daemon-v1.2.1`](https://github.com/WarrenBrowse/warren-app/releases/tag/daemon-v1.2.1)
+  [`daemon-v1.2.1`](https://github.com/WarrenBrowse/warren-cli/releases/tag/daemon-v1.2.1)
   (clean `1.2.1`, all four artifacts).
-- 🚧 Signing / notarization — pending (artifacts are unsigned, like the GUI).
+- 🚧 Signing / notarization: pending (artifacts are unsigned, like the GUI).
 - ⏸️ Windows system-VPN tunnel is untested upstream; control-plane works.
 
 ## License

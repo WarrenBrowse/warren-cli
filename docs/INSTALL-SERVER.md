@@ -8,10 +8,10 @@ source**.
 
 ---
 
-## Option A — Install a prebuilt package (recommended)
+## Option A: install a prebuilt package (recommended)
 
-> Prebuilt `.deb` / `.rpm` are produced by this repo's release pipeline. Until a
-> release is published, use Option B.
+> Prebuilt `.deb` / `.rpm` are produced by this repo's release pipeline and
+> published on the [releases page](https://github.com/WarrenBrowse/warren-cli/releases).
 
 ### Debian / Ubuntu
 
@@ -36,17 +36,18 @@ It resolves the latest `daemon-v*` release, downloads the right `.deb`/`.rpm`,
 installs the binaries + `warren-daemon` systemd unit + resources + completions, and
 enables the service.
 
-> **While the repos are private** the download needs GitHub auth: install on a host
-> with `gh` logged in (`gh auth login`), or pass a token —
-> `curl -fsSL …/install.sh | sudo GH_TOKEN=<token> sh`. Once a release is made
-> public, the token-less one-liner works.
+> The published Linux packages currently target amd64/x86_64 only. On an ARM
+> server the installer finds no matching asset; build from source instead
+> (Option B).
 
 ---
 
-## Option B — Build from source
+## Option B: build from source
 
 Requires a sibling checkout of `warren-app` and **its** siblings `warren-core`
 and `warrenguard`, plus `cargo`, `protoc`, `cargo-deb`, `cargo-generate-rpm`.
+These three repositories are not yet public, so this path currently needs
+access to them; without it, use Option A.
 
 ```
 dev/
@@ -160,5 +161,6 @@ sudo apt-get remove warren-vpn-daemon         # or: sudo rpm -e warren-vpn-daemo
   QUIC tunnel.
 - The daemon talks to `api.warrenbrowse.com` (prod channel) or
   `api.beta.warrenbrowse.com` (beta channel), whichever `WARREN_PRODUCT_ENV` the
-  binary was built with (defaults to prod). Both are currently **test
-  networks**; use a subscribed test wallet only.
+  binary was built with. During the public beta, the beta channel is the live
+  service and expects a regular account with an active subscription; the prod
+  channel is not open yet.
