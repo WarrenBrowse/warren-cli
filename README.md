@@ -70,8 +70,9 @@ warren status                         # show tunnel state
 curl -fsSL https://raw.githubusercontent.com/WarrenBrowse/warren-cli/main/scripts/install.sh | sudo sh
 ```
 
-The published Linux packages currently target amd64/x86_64 only; on an ARM
-server, build from source (see below). Full walkthrough incl. macOS/Windows:
+The published Linux packages cover amd64/x86_64 and arm64/aarch64; the installer
+reads `uname -m` and fetches the matching one, so a Raspberry Pi or an ARM cloud
+instance takes the same command. Full walkthrough incl. macOS/Windows:
 [`docs/INSTALL-SERVER.md`](docs/INSTALL-SERVER.md).
 
 ## Building the packages
@@ -111,7 +112,8 @@ prebuilt packages above are the way to install.
 Headless artifacts are built by **warren-app**'s `release-daemon.yml` workflow on
 the self-hosted runners (it reuses the same build env as the GUI release):
 
-- **Linux**: `warren-vpn-daemon_<ver>_<arch>.deb` / `.rpm` (`build.sh --daemon-only`)
+- **Linux x86_64**: `warren-vpn-daemon_<ver>_amd64.deb` / `_x86_64.rpm` (`build.sh --daemon-only`)
+- **Linux arm64**: `warren-vpn-daemon_<ver>_arm64.deb` / `_aarch64.rpm` (same, on the aarch64 runner)
 - **macOS**: `warren-headless-macos-<arch>.tar.gz` (binaries + launchd installer)
 - **Windows**: `warren-headless-windows-x64.zip` (binaries + service installer, experimental)
 

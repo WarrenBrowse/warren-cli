@@ -8,18 +8,20 @@ the install glue and docs.
 
 ## Pipeline
 
-`warren-app/.github/workflows/release-daemon.yml` has three jobs:
+`warren-app/.github/workflows/release-daemon.yml` has four jobs:
 
 | Job | Runner | Output |
 |---|---|---|
-| `linux` | self-hosted Linux x64 | `warren-vpn-daemon_<ver>_<arch>.deb` + `.rpm` via `build.sh --daemon-only --optimize` |
+| `linux` | self-hosted Linux x64 | `warren-vpn-daemon_<ver>_amd64.deb` + `_x86_64.rpm` via `build.sh --daemon-only --optimize` |
+| `linux-arm64` | self-hosted Linux arm64 | `warren-vpn-daemon_<ver>_arm64.deb` + `_aarch64.rpm`, same command |
 | `macos` | self-hosted macOS arm64 | `warren-headless-macos-<arch>.tar.gz` (binaries + resources + `macos/` installer) |
 | `windows` | self-hosted Windows x64 | `warren-headless-windows-x64.zip` (binaries + resources + `windows/` installer) |
 
-The exact runner labels live in the workflow file in `warren-app`.
+The exact runner labels live in the workflow file in `warren-app`. The two Linux
+jobs each build on their own architecture; nothing is cross-compiled.
 
 The macOS/Windows jobs check this repo out to bundle the install scripts from
-`macos/` and `windows/`. All three jobs **publish their artifacts to a release in
+`macos/` and `windows/`. Every job **publishes its artifacts to a release in
 `warren-cli`** (the public-facing distribution repo), not in warren-app, so the
 public install one-liner only needs `warren-cli` to be public.
 
@@ -38,7 +40,7 @@ workflow writes `dist-assets/desktop-product-version.txt` and creates a *local*
    git tag daemon-v1.2.1
    git push origin daemon-v1.2.1
    ```
-2. The three jobs build and attach their artifacts to a **draft** release
+2. The four jobs build and attach their artifacts to a **draft** release
    `daemon-v1.2.1` **in `warren-cli`**.
 3. Review and publish that warren-cli release. `scripts/install.sh` then resolves
    it automatically (it picks the latest `daemon-v*` release).

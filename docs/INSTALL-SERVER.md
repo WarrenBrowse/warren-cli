@@ -13,10 +13,17 @@ source**.
 > Prebuilt `.deb` / `.rpm` are produced by this repo's release pipeline and
 > published on the [releases page](https://github.com/WarrenBrowse/warren-cli/releases).
 
+Each release carries both architectures: `amd64` / `x86_64` for Intel and AMD,
+`arm64` / `aarch64` for 64-bit ARM (Raspberry Pi 4 and 5, Ampere and Graviton
+instances). Substitute yours in the commands below, or use the one-liner, which
+reads `uname -m` for you.
+
 ### Debian / Ubuntu
 
 ```bash
 sudo dpkg -i warren-vpn-daemon_<version>_amd64.deb || sudo apt-get -f install
+# 64-bit ARM:
+sudo dpkg -i warren-vpn-daemon_<version>_arm64.deb || sudo apt-get -f install
 ```
 
 ### Fedora / RHEL
@@ -24,6 +31,7 @@ sudo dpkg -i warren-vpn-daemon_<version>_amd64.deb || sudo apt-get -f install
 ```bash
 sudo rpm -i warren-vpn-daemon_<version>_x86_64.rpm
 # or: sudo dnf install ./warren-vpn-daemon_<version>_x86_64.rpm
+# 64-bit ARM: warren-vpn-daemon_<version>_aarch64.rpm
 ```
 
 ### One-liner
@@ -36,9 +44,8 @@ It resolves the latest `daemon-v*` release, downloads the right `.deb`/`.rpm`,
 installs the binaries + `warren-daemon` systemd unit + resources + completions, and
 enables the service.
 
-> The published Linux packages currently target amd64/x86_64 only. On an ARM
-> server the installer finds no matching asset; build from source instead
-> (Option B).
+> 32-bit ARM and riscv64 are not published. The installer maps `uname -m` for
+> them but finds no matching asset; build from source instead (Option B).
 
 ---
 
