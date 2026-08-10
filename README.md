@@ -1,3 +1,7 @@
+<p align="center">
+  <img src=".github/warren-logo.svg" alt="Warren" width="130"/>
+</p>
+
 # warren-cli
 
 **The headless / server distribution of the Warren VPN command-line client.**
