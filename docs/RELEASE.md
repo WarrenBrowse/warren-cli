@@ -43,10 +43,10 @@ also asserts the artifact set is complete before publishing, because a build
 job that succeeds while uploading nothing leaves a hole only the user on that
 platform ever finds.
 
-Windows is **not** in that gate yet: the Warren tunnel is unvalidated there, so
-a red Windows job warns and the release ships without its zip rather than
-blocking every app release on an unproven path. Move it into the gate once it
-has been green on a release.
+**Every platform gates**, Windows included since `daemon-beta-v1.1.15`. A
+release is the whole artifact set or it is not a release: one advertising
+Windows while silently shipping without its zip is the failure nobody notices
+until a user cannot find their build.
 
 ## Channels
 

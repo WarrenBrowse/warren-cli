@@ -74,6 +74,21 @@ channel today, and takes `CHANNEL=prod`.
   same runtime directory, management socket and firewall identity, and the loser
   is whichever daemon starts second, on a machine whose kill switch is armed.
 
+- The Windows zip is written with the forward slashes the ZIP format specifies.
+  PowerShell's `Compress-Archive` writes backslashes, which Explorer and 7-Zip
+  tolerate but `unzip` refuses outright, so nobody could inspect the Windows
+  bundle from a Linux or macOS machine. The builder verifies the result really
+  is a zip: Git Bash's GNU tar also answers to `tar -a -cf out.zip` and writes a
+  plain TAR under that name, which would look like a successful build and
+  extract to nothing.
+- The `.deb` installs the zsh completions to `/usr/share/zsh/site-functions`,
+  where the `.rpm` and the tarball already put them. The Debian Policy reserves
+  `/usr/local` for the local administrator, so a package writing there can
+  overwrite what an admin left in it. The drift test now compares installed
+  DESTINATIONS as well as sources, which is what let the divergence sit unseen.
+- Every platform now gates the publish, Windows included. A release is the whole
+  artifact set or it is not a release.
+
 ### Added
 
 - `linux/`: the OpenRC service and the tarball installer, alongside `macos/`
