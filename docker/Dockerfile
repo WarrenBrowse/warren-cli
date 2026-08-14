@@ -60,9 +60,13 @@ RUN set -eu; \
     test -x /rootfs/usr/bin/warren
 
 FROM debian:stable-slim
+# libdbus-1-3 is a hard runtime dependency of warren-daemon (the deb's
+# `Depends`), and `dpkg-deb -x` in the unpack stage resolves no dependencies,
+# so it must be installed explicitly or the daemon dies at load time with
+# `libdbus-1.so.3: cannot open shared object file`.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       ca-certificates nftables iproute2 curl \
+       ca-certificates nftables iproute2 curl libdbus-1-3 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=unpack /rootfs/ /
 COPY docker/entrypoint.sh /usr/local/bin/warren-entrypoint

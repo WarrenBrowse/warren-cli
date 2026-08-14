@@ -33,7 +33,7 @@ read_secret() {
     file_var="$1"; env_var="$2"
     file_val=$(eval "printf '%s' \"\${$file_var:-}\"")
     if [ -n "$file_val" ]; then
-        [ -r "$file_val" ] || fatal "$file_var points at an unreadable path"
+        { [ -f "$file_val" ] && [ -r "$file_val" ]; } || fatal "$file_var must point at a readable file"
         cat "$file_val"
     else
         eval "printf '%s' \"\${$env_var:-}\""
@@ -156,7 +156,9 @@ fi
 
 # ---- connect ---------------------------------------------------------------
 log "connecting (timeout ${WARREN_CONNECT_TIMEOUT}s)"
-timeout "${WARREN_CONNECT_TIMEOUT}" warren_cli connect --wait \
+# timeout(1) execs its argument, so it cannot run the warren_cli shell
+# function: call the binary directly.
+timeout "${WARREN_CONNECT_TIMEOUT}" /usr/bin/warren connect --wait \
     || fatal "tunnel did not come up within ${WARREN_CONNECT_TIMEOUT}s"
 warren_cli status | head -2
 
