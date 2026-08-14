@@ -42,6 +42,13 @@ channel today, and takes `CHANNEL=prod`.
 - The installer refuses a musl host (Alpine) with a reason, instead of letting
   the dynamic loader fail with a message that names neither Warren nor the
   cause. These binaries are glibc-linked.
+- It also refuses, before touching the filesystem, a host missing a shared
+  library the daemon needs, naming the library `ldd` could not resolve and the
+  package it comes from. A tarball resolves no dependencies, unlike the `.deb`
+  and the `.rpm`, and `libdbus-1.so.3` is absent from exactly the kind of
+  minimal server this tarball exists for. Found because the container image hit
+  the same wall: it unpacks the `.deb` with `dpkg-deb -x`, which resolves
+  nothing either, and the daemon died at load.
 
 ### Fixed in the artifacts themselves
 

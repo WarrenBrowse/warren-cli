@@ -106,16 +106,46 @@ cd "$SCRIPT_DIR"
 [ -f bin/warren-daemon ] || err "run this from inside the extracted bundle directory."
 
 # ---------------------------------------------------------------------------
-# Refuse the two situations that install cleanly and then fail
+# Refuse the situations that install cleanly and then fail
 # ---------------------------------------------------------------------------
 
-# These binaries are linked against glibc. On a musl host the loader fails with
-# a message that names neither Warren nor the reason, so say it here.
+# Shared libraries the daemon needs that this host does not have.
+#
+# `ldd` prints one line per dependency and marks an unresolved one "not found".
+# Reading it back is the only check that stays correct as the dependency set
+# changes, which a hardcoded list would not.
+warren_missing_libs() { # warren_missing_libs   (ldd output on stdin)
+	awk '/not found/ { print $1 }'
+}
 if [ -n "$(find /lib /lib64 -maxdepth 1 -name 'ld-musl-*' -print -quit 2> /dev/null)" ] \
 	&& [ ! -e /lib64/ld-linux-x86-64.so.2 ] && [ ! -e /lib/ld-linux-aarch64.so.1 ]; then
 	err "this host uses musl (Alpine and derivatives); the Warren binaries are built
        against glibc and cannot run here. Install gcompat at your own risk, or
        run Warren in a glibc container."
+fi
+
+# A tarball resolves no dependencies, unlike the .deb and the .rpm, whose
+# package managers refuse an install whose Depends are unmet. Without this the
+# files land, the service is wired up, and the daemon dies at load with
+# "libdbus-1.so.3: cannot open shared object file", which names neither Warren
+# nor the package to install. The distributions this tarball targets are exactly
+# the ones where a minimal server install has no dbus.
+if command -v ldd > /dev/null 2>&1; then
+	MISSING="$(ldd bin/warren-daemon 2> /dev/null | warren_missing_libs)"
+	if [ -n "$MISSING" ]; then
+		printf '\033[0;31m[error]\033[0m the daemon needs shared libraries this host does not have:\n' >&2
+		for lib in $MISSING; do printf '         %s\n' "$lib" >&2; done
+		printf '       Install them, then run this script again. libdbus-1.so.3 comes from:\n' >&2
+		printf '         Arch/Artix   pacman -S dbus\n' >&2
+		printf '         Void         xbps-install -S dbus\n' >&2
+		printf '         Gentoo       emerge sys-apps/dbus\n' >&2
+		printf '         Slackware    the dbus package of your release\n' >&2
+		printf '       Nothing has been installed.\n' >&2
+		exit 1
+	fi
+else
+	warn "no ldd on this host; cannot check the daemon's shared libraries. If it
+       fails to start, look for a 'cannot open shared object file' error."
 fi
 
 # A package-managed install owns the same paths. Overwriting them from a

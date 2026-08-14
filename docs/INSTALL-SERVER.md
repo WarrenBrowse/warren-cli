@@ -88,6 +88,12 @@ service manager the host actually runs:
 | sysvinit | `/etc/init.d/warren-daemon` + a supervisor standing in for `Restart=always` |
 | anything else | the files, and the command to run the daemon yourself |
 
+A tarball resolves no dependencies, unlike the `.deb` and the `.rpm`, so the
+installer checks them itself and refuses before touching the filesystem if one
+is missing. The only one a minimal server is likely to lack is **`libdbus-1.so.3`**
+(`pacman -S dbus`, `xbps-install -S dbus`, `emerge sys-apps/dbus`); the
+installer names whatever `ldd` reports and the package it comes from.
+
 The daemon exits **fail-closed**: on a crash the kernel firewall is left
 blocking. Whatever supervises it must restart it forever, never give up after a
 burst of failures. All three integrations above do; a hand-rolled one must too.
