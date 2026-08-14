@@ -78,14 +78,12 @@ jobs:
               | sed "s|^$(warren_tag_prefix "$1")||"
           }
           if [ -z "$version" ]; then
+            # Build-only runs (push/PR) and dispatch default to the beta
+            # series, the only live one. The prod series carries only the
+            # superseded 1.2.1, built for the retired production API host
+            # (410), so it is deliberately never resolved by default: a prod
+            # image follows a prod release event, once production opens.
             version=$(latest_of "$channel")
-            # Build-only runs (push/PR) validate the Dockerfile against
-            # whichever series has a release at all, so an empty beta series
-            # does not paint main red before the first beta release exists.
-            if [ -z "$version" ] && [ "$EVENT" != "workflow_dispatch" ]; then
-              channel=prod
-              version=$(latest_of prod)
-            fi
             [ -n "$version" ] || { echo "no $channel daemon release found" >&2; exit 1; }
           fi
           prefix="$(warren_tag_prefix "$channel")"
