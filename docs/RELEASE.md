@@ -3,64 +3,94 @@
 The GUI-less Warren artifacts are produced by the **`release-daemon.yml`**
 workflow in the [warren-app](https://github.com/WarrenBrowse/warren-app) repo
 (not yet public; it owns the build toolchain, the self-hosted runners, and the
-`mullvad-build-env` composite action). This repo (`warren-cli`) only provides
-the install glue and docs.
+`mullvad-build-env` composite action). This repo (`warren-cli`) provides the
+install glue, the service units and the docs.
 
-## Pipeline
+## A CLI release rides on every app release
 
-`warren-app/.github/workflows/release-daemon.yml` has four jobs:
+`release-daemon.yml` is a reusable workflow that `warren-app`'s `release.yml`
+calls on **every** `v*` / `beta-v*` tag, and the app's publish job requires it
+to have succeeded. So a new app version always ships the matching CLI, at the
+same version, built from the same commit. Nobody has to remember a second tag.
+
+That coupling exists because the alternative was tried: the headless artifacts
+had their own tag series and their own cadence, so `warren-cli` served a June
+build while the app shipped weekly, and when the production API host was
+retired that build was left pointing at a host answering 410.
+
+Cutting the CLI **alone** is still possible when there is no app release to
+make: push a `daemon-v*` (prod) or `daemon-beta-v*` (beta) tag on `warren-app`.
+It triggers the same workflow through the same path.
+
+## What a release contains
 
 | Job | Runner | Output |
 |---|---|---|
-| `linux` | self-hosted Linux x64 | `warren-vpn-daemon_<ver>_amd64.deb` + `_x86_64.rpm` via `build.sh --daemon-only --optimize` |
-| `linux-arm64` | self-hosted Linux arm64 | `warren-vpn-daemon_<ver>_arm64.deb` + `_aarch64.rpm`, same command |
-| `macos` | self-hosted macOS arm64 | `warren-headless-macos-<arch>.tar.gz` (binaries + resources + `macos/` installer) |
-| `windows` | self-hosted Windows x64 | `warren-headless-windows-x64.zip` (binaries + resources + `windows/` installer) |
+| `linux` | self-hosted Linux x64 | `warren-vpn-daemon[-beta]_<ver>_amd64.deb`, `_x86_64.rpm`, `warren-headless[-beta]-<ver>-linux-x86_64.tar.gz` |
+| `linux-arm64` | self-hosted Linux arm64 | the same three for `arm64` / `aarch64` |
+| `macos` | self-hosted macOS arm64 | `warren-headless[-beta]-<ver>-macos-universal.tar.gz` (both slices, `lipo`-joined) |
+| `windows` | self-hosted Windows | `warren-headless[-beta]-<ver>-windows-x64.zip` |
+| `finalise` | self-hosted Linux x64 | `SHA256SUMS`, and the **published** (non-draft) release |
 
-The exact runner labels live in the workflow file in `warren-app`. The two Linux
-jobs each build on their own architecture; nothing is cross-compiled.
+The two Linux jobs each build on their own architecture; nothing is
+cross-compiled. Every job publishes to a release in `warren-cli`, not in
+warren-app, so the public install one-liner only needs `warren-cli` to be
+public.
 
-The macOS/Windows jobs check this repo out to bundle the install scripts from
-`macos/` and `windows/`. Every job **publishes its artifacts to a release in
-`warren-cli`** (the public-facing distribution repo), not in warren-app, so the
-public install one-liner only needs `warren-cli` to be public.
+`finalise` is what makes a release visible: a draft release's asset URLs answer
+404 and the API does not list it, so `scripts/install.sh` cannot see one. It
+also asserts the artifact set is complete before publishing, because a build
+job that succeeds while uploading nothing leaves a hole only the user on that
+platform ever finds.
+
+Windows is **not** in that gate yet: the Warren tunnel is unvalidated there, so
+a red Windows job warns and the release ships without its zip rather than
+blocking every app release on an unproven path. Move it into the gate once it
+has been green on a release.
+
+## Channels
+
+The tag shape picks the channel, and one run publishes exactly one of them
+(shared rule `50-release-channels.md`):
+
+| app tag | standalone tag | warren-cli release | artifacts |
+|---|---|---|---|
+| `v1.2.3` | `daemon-v1.2.3` | `daemon-v1.2.3`, latest | `warren-vpn-daemon_…`, `warren-headless-…` |
+| `beta-v1.2.3` | `daemon-beta-v1.2.3` | `daemon-beta-v1.2.3`, pre-release | `warren-vpn-daemon-beta_…`, `warren-headless-beta-…` |
+
+The two series are independent and never sort together. A beta release never
+becomes the prod "latest", so an installer resolving the prod channel can never
+be handed a beta build.
 
 ## Versioning
 
-A `daemon-vX.Y.Z` tag emits a **clean** version (`X.Y.Z`, no `-dev-<hash>`): the
-workflow writes `dist-assets/desktop-product-version.txt` and creates a *local*
-`vX.Y.Z` tag at build time so `mullvad-version` drops the suffix, without pushing
-`vX.Y.Z`, so the GUI `release.yml` (triggered by `v*.*.*`) is **not** fired. An
-`-rc` suffix (`daemon-vX.Y.Z-rc1`) keeps the `-dev` version.
-
-## How to release
-
-1. From `warren-app` (on `main`), tag and push:
-   ```bash
-   git tag daemon-v1.2.1
-   git push origin daemon-v1.2.1
-   ```
-2. The four jobs build and attach their artifacts to a **draft** release
-   `daemon-v1.2.1` **in `warren-cli`**.
-3. Review and publish that warren-cli release. `scripts/install.sh` then resolves
-   it automatically (it picks the latest `daemon-v*` release).
+A release version IS its tag. On a standalone `daemon-[beta-]vX.Y.Z` tag the
+`stamp-headless-version` action writes `dist-assets/desktop-product-version.txt`
+and creates a *local* `vX.Y.Z` tag so `mullvad-version` drops its `-dev-<hash>`
+suffix; that tag is never pushed, so the GUI `release.yml` is not fired. A
+version with a pre-release suffix (`daemon-vX.Y.Z-rc1`) keeps the `-dev`
+version and is built but never published.
 
 ## Required secrets (on `warren-app`)
 
-- `WARREN_CORE_RO_TOKEN`: read access to `warren-core` + `warrenguard` (and, for
-  the mac/win jobs, to check out `warren-cli`).
-- `WARREN_CLI_RELEASE_TOKEN`: token with **contents:write** on `warren-cli`, used
-  to publish the artifacts there. (A fine-grained PAT or GitHub App token.)
+- `WARREN_CORE_RO_TOKEN`: read access to the sibling repos, and to check out
+  `warren-cli` for the install assets.
+- `WARREN_CLI_RELEASE_TOKEN`: token with **contents:write** on `warren-cli`,
+  used to publish the artifacts and finalise the release there.
 
 Signing/notarization secrets are optional; without them the artifacts are
-unsigned (acceptable until Warren has signing accounts, same posture as the
-GUI `release.yml`).
+unsigned (same posture as the GUI `release.yml`).
 
 ## Local dry-run
 
-Linux packaging can be exercised on a Linux host (or the self-hosted runner)
-without CI:
+Linux packaging can be exercised on a Linux host without CI:
 
 ```bash
-./scripts/build-daemon-only.sh        # → warren-app/dist/warren-vpn-daemon_*.deb
+./scripts/build-daemon-only.sh        # -> warren-app/dist/warren-vpn-daemon*.deb
+```
+
+The installer's own resolution logic is testable anywhere:
+
+```bash
+sh scripts/test-install.sh
 ```

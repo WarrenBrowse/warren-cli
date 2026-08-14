@@ -19,7 +19,17 @@ jobs:
       - name: ShellCheck
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
-          shellcheck -S warning scripts/*.sh macos/*.sh
+          # Every tracked shell script, rather than a list of directories: a
+          # glob naming a directory that does not exist yet fails the job, and
+          # a new directory that nobody adds to the list is never linted.
+          git ls-files -z '*.sh' | xargs -0 shellcheck -S warning
+
+      # The installer's whole job is to name the one artifact that fits the
+      # machine in front of it, out of conventions owned by the release
+      # pipeline. A rename there turns into a 404 on someone else's server, so
+      # the conventions are pinned here rather than reviewed by eye.
+      - name: Installer resolution tests
+        run: sh scripts/test-install.sh
 
   powershell:
     runs-on: ubuntu-latest

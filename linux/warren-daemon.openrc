@@ -1,0 +1,38 @@
+#!/sbin/openrc-run
+# OpenRC service for the Warren VPN daemon (Gentoo, Artix, Devuan's OpenRC
+# profile, and the OpenRC spins of several source distributions). Counterpart
+# of warren-app's dist-assets/linux/warren-daemon.service, installed by the
+# generic tarball on hosts that run OpenRC instead of systemd.
+
+supervisor="supervise-daemon"
+name="warren-daemon"
+description="Warren VPN daemon"
+
+command="/usr/bin/warren-daemon"
+command_args="-vv --disable-stdout-timestamps"
+pidfile="/run/warren-daemon.pid"
+output_log="/var/log/warren-daemon.log"
+error_log="/var/log/warren-daemon.log"
+
+# The daemon exits fail-closed: on a panic the kernel firewall is left
+# blocking, so a supervisor that gives up after a burst of crashes strands the
+# machine offline with nothing able to unblock it. respawn_max=0 is
+# supervise-daemon's "never stop retrying", matching the systemd unit's
+# StartLimitIntervalSec=0 and launchd's KeepAlive.
+respawn_delay=1
+respawn_max=0
+
+# The daemon resolves its resources relative to its own executable unless told
+# otherwise, and the binaries install to /usr/bin while the resources install
+# under /opt.
+export WARREN_RESOURCE_DIR="/opt/Warren VPN/resources/"
+
+depend() {
+	need localmount
+	# Up before the network is configured, which is what the systemd unit
+	# expresses with Before=network-online.target.
+	before net
+	# Soft ordering only: present these first where they exist, never refuse
+	# to start on a host without them.
+	use dns logger dbus
+}

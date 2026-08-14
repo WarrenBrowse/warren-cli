@@ -6,10 +6,16 @@
 
 **The headless / server distribution of the Warren VPN command-line client.**
 
-## TL;DR: install in one command (Linux)
+## TL;DR: install in one command (Linux and macOS)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/WarrenBrowse/warren-cli/main/scripts/install.sh | sudo sh
+```
+
+Windows, from an elevated PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/WarrenBrowse/warren-cli/main/windows/install-windows.ps1 | iex
 ```
 
 Then: `warren account create && warren connect`.
@@ -33,19 +39,35 @@ crates themselves.
 
 ## What you get
 
-A `warren-vpn-daemon` package (`.deb` / `.rpm`) containing:
-
 | Path | What |
 |---|---|
 | `/usr/bin/warren` | the CLI |
-| `/usr/bin/warren-daemon` | the privileged daemon (systemd service) |
+| `/usr/bin/warren-daemon` | the privileged daemon (a service, supervised) |
 | `/usr/bin/warren-exclude` | split-tunnel helper (Linux) |
-| `/usr/lib/systemd/system/warren-daemon.service` | the service unit |
-| `/opt/Warren VPN/resources/` | runtime resources (`ca.crt`, relay bootstrap, …) |
+| `/opt/Warren VPN/resources/` | runtime resources (`ca.crt`, relay lists, the problem reporter) |
+| service unit | systemd, OpenRC or sysvinit on Linux; launchd on macOS; the SCM on Windows |
 | shell completions | bash / zsh / fish |
 
-The package `conflicts` with the desktop `warren-vpn` package: it is the
-GUI-less counterpart.
+The package conflicts with every Warren desktop package: one Warren daemon per
+machine, because two of them claim the same runtime directory, the same
+management socket and the same firewall identity.
+
+## Every machine, spelled out
+
+| Host | Artifact |
+|---|---|
+| Debian, Ubuntu, Mint, Pop!\_OS, Raspberry Pi OS | `.deb` (amd64, arm64) |
+| Fedora, RHEL, Alma, Rocky, openSUSE | `.rpm` (x86_64, aarch64) |
+| Arch, Void, Gentoo, Artix, Slackware, NixOS, any other glibc Linux | generic tarball (x86_64, aarch64) |
+| macOS, Apple Silicon and Intel | one universal tarball |
+| Windows 10/11 x64, and ARM64 under emulation | zip |
+
+The one-liner reads the host and picks for you. What is **not** covered: musl
+systems (Alpine and derivatives), which the installer refuses with a reason
+rather than a loader error, and 32-bit ARM and riscv64, which are not published.
+
+Every artifact is checksummed in the release's `SHA256SUMS`, and every installer
+verifies against it.
 
 ## Quick start (once a package is installed)
 
@@ -70,14 +92,19 @@ warren status                         # show tunnel state
 ## Install
 
 ```bash
-# Linux server (resolves the latest daemon-v* release and installs it):
 curl -fsSL https://raw.githubusercontent.com/WarrenBrowse/warren-cli/main/scripts/install.sh | sudo sh
+
+CHANNEL=prod   # the production series, once it opens (beta is the live one today)
+VERSION=1.1.14 # pin a version instead of the newest
+sudo sh install.sh --uninstall
 ```
 
-The published Linux packages cover amd64/x86_64 and arm64/aarch64; the installer
-reads `uname -m` and fetches the matching one, so a Raspberry Pi or an ARM cloud
-instance takes the same command. Full walkthrough incl. macOS/Windows:
-[`docs/INSTALL-SERVER.md`](docs/INSTALL-SERVER.md).
+Full walkthrough, including the per-init-system service wiring and the Windows
+path: [`docs/INSTALL-SERVER.md`](docs/INSTALL-SERVER.md).
+
+`warren version` names the version, the compiled product environment and the API
+host that environment resolves to, without needing the daemon to answer. That is
+how you tell a beta install from a prod one when something is wrong.
 
 ## Building the packages
 
@@ -113,27 +140,31 @@ prebuilt packages above are the way to install.
 
 ## Releases
 
-Headless artifacts are built by **warren-app**'s `release-daemon.yml` workflow on
-the self-hosted runners (it reuses the same build env as the GUI release):
+**A CLI release rides on every app release, by design.** `release-daemon.yml` is
+a reusable workflow that warren-app's `release.yml` calls on every `v*` /
+`beta-v*` tag, and the app's publish job requires it to have succeeded. So the
+CLI is always the same version as the app, built from the same commit. Cutting
+the CLI alone stays possible: push a `daemon-v*` / `daemon-beta-v*` tag in
+warren-app.
 
-- **Linux x86_64**: `warren-vpn-daemon_<ver>_amd64.deb` / `_x86_64.rpm` (`build.sh --daemon-only`)
-- **Linux arm64**: `warren-vpn-daemon_<ver>_arm64.deb` / `_aarch64.rpm` (same, on the aarch64 runner)
-- **macOS**: `warren-headless-macos-<arch>.tar.gz` (binaries + launchd installer)
-- **Windows**: `warren-headless-windows-x64.zip` (binaries + service installer, experimental)
+The tag shape picks the channel, and one run publishes exactly one of them.
+Beta artifacts carry a `-beta` token and land on a pre-release, so an installer
+resolving the prod channel can never be handed a beta build.
 
-Cut a release by pushing a `daemon-v*` tag in `warren-app`. See
-[`docs/RELEASE.md`](docs/RELEASE.md).
+See [`docs/RELEASE.md`](docs/RELEASE.md).
 
 ## Status
 
 - ✅ `warren` + `warren-daemon` build standalone (no Electron) and run, validated.
-- ✅ Mullvad→Warren CLI branding (`warren --version` → `warren x.y.z`).
-- ✅ CI green on all three OSes; Linux `.deb`/`.rpm`, macOS tarball, Windows zip.
-- ✅ First release published:
-  [`daemon-v1.2.1`](https://github.com/WarrenBrowse/warren-cli/releases/tag/daemon-v1.2.1)
-  (clean `1.2.1`, all four artifacts).
+- ✅ Every artifact is checksummed and every installer verifies it.
+- ✅ Linux `.deb` / `.rpm` / generic tarball, macOS universal tarball, Windows zip.
+- ✅ Linux service wiring for systemd, OpenRC and sysvinit.
+- ✅ Docker image `ghcr.io/warrenbrowse/warren-vpn` (kill switch, port-forward
+  hooks, `network_mode: service:` sidecars): [`docs/DOCKER.md`](docs/DOCKER.md).
 - 🚧 Signing / notarization: pending (artifacts are unsigned, like the GUI).
 - ⏸️ Windows system-VPN tunnel is untested upstream; control-plane works.
+- ❌ musl (Alpine): the binaries are glibc-linked; the installer says so.
+- ❌ 32-bit ARM, riscv64: not published; build from source.
 
 ## License
 
