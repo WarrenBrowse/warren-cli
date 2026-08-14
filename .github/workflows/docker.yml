@@ -121,6 +121,19 @@ jobs:
         if: steps.resolve.outputs.skip != 'true'
         uses: docker/setup-buildx-action@v3
 
+      # The smoke test gates the push: build the amd64 image locally, prove
+      # the daemon starts and the entrypoint refuses its bad-input cases, and
+      # only then publish the multi-arch image. A broken image (a missing
+      # runtime lib, a daemon that cannot load) must never reach :beta.
+      - name: Offline image smoke tests (amd64)
+        if: steps.resolve.outputs.skip != 'true'
+        run: |
+          docker buildx build --load -f docker/Dockerfile \
+            --build-arg WARREN_CHANNEL=${{ steps.resolve.outputs.channel }} \
+            --build-arg WARREN_DAEMON_VERSION=${{ steps.resolve.outputs.version }} \
+            -t warren-vpn:test .
+          ./docker/test-image.sh warren-vpn:test
+
       - name: Login to GHCR
         if: steps.resolve.outputs.skip != 'true' && github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -129,7 +142,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build (and publish on release/dispatch)
+      - name: Build and publish (release/dispatch only, after the smoke test)
         if: steps.resolve.outputs.skip != 'true'
         uses: docker/build-push-action@v6
         with:
@@ -141,12 +154,3 @@ jobs:
             WARREN_DAEMON_VERSION=${{ steps.resolve.outputs.version }}
           push: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
           tags: ${{ steps.resolve.outputs.tags }}
-
-      - name: Offline image smoke tests (amd64)
-        if: steps.resolve.outputs.skip != 'true'
-        run: |
-          docker buildx build --load -f docker/Dockerfile \
-            --build-arg WARREN_CHANNEL=${{ steps.resolve.outputs.channel }} \
-            --build-arg WARREN_DAEMON_VERSION=${{ steps.resolve.outputs.version }} \
-            -t warren-vpn:test .
-          ./docker/test-image.sh warren-vpn:test
