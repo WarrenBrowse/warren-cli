@@ -26,6 +26,18 @@ Use `:beta` until production opens; the examples do. The container itself is
 channel-neutral glue: the channel is baked into the daemon binaries the image
 repackages (API host, state paths, firewall id), never into the entrypoint.
 
+**Availability: the published image is not public yet.** Until the GHCR package
+is made public, a plain `docker pull ghcr.io/warrenbrowse/warren-vpn:beta`
+answers `unauthorized`. Build it locally under that exact name (see
+[Building locally](#building-locally)) so every command and example below runs
+unchanged:
+
+```bash
+docker build -f docker/Dockerfile -t ghcr.io/warrenbrowse/warren-vpn:beta .
+```
+
+This section will switch to the direct pull once the package is public.
+
 ## Quick start
 
 ```bash
