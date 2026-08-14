@@ -64,6 +64,17 @@ be handed a beta build.
 
 ## Versioning
 
+**The app and the headless client share one version space per channel.** A
+number is used once, by whichever series claims it first, so a `1.1.15` app
+build and a `1.1.15` CLI build can never be two different trees. Both release
+paths run `warren-app/ci/check-release-version.sh`, which refuses a version that
+regresses or that the other series already used, and names the next free number.
+
+So a standalone CLI release takes the next number and the app's next release
+skips past it. The guard also sorts with `sort -V`, never lexicographically:
+`1.9.1` reads as newer than `1.11.0` otherwise, and that shipped a version
+regression once.
+
 A release version IS its tag. On a standalone `daemon-[beta-]vX.Y.Z` tag the
 `stamp-headless-version` action writes `dist-assets/desktop-product-version.txt`
 and creates a *local* `vX.Y.Z` tag so `mullvad-version` drops its `-dev-<hash>`
