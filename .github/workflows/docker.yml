@@ -1,0 +1,143 @@
+# Build and publish ghcr.io/warrenbrowse/warren-vpn from the released
+# warren-vpn-daemon .deb artifacts (see docs/DOCKER.md).
+#
+# Runs on: every published daemon release of either channel (the artifacts
+# land, the image follows), manual dispatch (optionally pinning channel and
+# version), and as a build-only check when the docker/ tree changes.
+#
+# One run publishes exactly one channel (shared release-channel contract):
+#   daemon-v*       -> ghcr.io/warrenbrowse/warren-vpn:<ver>       + :latest
+#   daemon-beta-v*  -> ghcr.io/warrenbrowse/warren-vpn:beta-<ver>  + :beta
+#
+# Platforms are discovered from the release assets: amd64 always, arm64 as
+# soon as the release carries an arm64 .deb. Asset and tag names come from
+# the installer's own sourceable resolution functions (scripts/install.sh,
+# WARREN_INSTALL_LIB=1), so the two cannot drift.
+
+name: docker
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "prod | beta"
+        required: false
+        default: "beta"
+      version:
+        description: "Daemon version to package (e.g. 1.2.1); empty = latest release of the channel"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    paths: ["docker/**", "scripts/install.sh", ".github/workflows/docker.yml"]
+  pull_request:
+    paths: ["docker/**", "scripts/install.sh", ".github/workflows/docker.yml"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve channel, version and platforms
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_CHANNEL: ${{ github.event.inputs.channel }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -eu
+          WARREN_INSTALL_LIB=1 . ./scripts/install.sh
+
+          channel=""
+          version=""
+          if [ "$EVENT" = "release" ]; then
+            case "$RELEASE_TAG" in
+              daemon-beta-v*) channel=beta; version="${RELEASE_TAG#daemon-beta-v}" ;;
+              daemon-v*)      channel=prod; version="${RELEASE_TAG#daemon-v}" ;;
+              *) echo "not a daemon release ($RELEASE_TAG), nothing to do"
+                 echo "skip=true" >>"$GITHUB_OUTPUT"; exit 0 ;;
+            esac
+          else
+            channel="${INPUT_CHANNEL:-beta}"
+            version="$INPUT_VERSION"
+          fi
+
+          prefix="$(warren_tag_prefix "$channel")"
+          if [ -z "$version" ]; then
+            version=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName \
+              --jq '.[].tagName' | warren_latest_tag "$prefix" | sed "s|^$prefix||")
+            [ -n "$version" ] || { echo "no $channel daemon release found" >&2; exit 1; }
+          fi
+
+          assets=$(gh release view "${prefix}${version}" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name')
+          amd64_deb="$(warren_asset Linux deb "$version" "$channel" x86_64)"
+          arm64_deb="$(warren_asset Linux deb "$version" "$channel" aarch64)"
+          platforms="linux/amd64"
+          echo "$assets" | grep -qx "$amd64_deb" \
+            || { echo "release ${prefix}${version} has no $amd64_deb" >&2; exit 1; }
+          if echo "$assets" | grep -qx "$arm64_deb"; then
+            platforms="$platforms,linux/arm64"
+          fi
+
+          if [ "$channel" = "beta" ]; then
+            tags="ghcr.io/warrenbrowse/warren-vpn:beta-${version},ghcr.io/warrenbrowse/warren-vpn:beta"
+          else
+            tags="ghcr.io/warrenbrowse/warren-vpn:${version},ghcr.io/warrenbrowse/warren-vpn:latest"
+          fi
+
+          {
+            echo "channel=$channel"
+            echo "version=$version"
+            echo "platforms=$platforms"
+            echo "tags=$tags"
+          } >>"$GITHUB_OUTPUT"
+          echo "building $channel $version for $platforms"
+
+      - name: Set up QEMU
+        if: steps.resolve.outputs.skip != 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        if: steps.resolve.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: steps.resolve.outputs.skip != 'true' && github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and publish on release/dispatch)
+        if: steps.resolve.outputs.skip != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: ${{ steps.resolve.outputs.platforms }}
+          build-args: |
+            WARREN_CHANNEL=${{ steps.resolve.outputs.channel }}
+            WARREN_DAEMON_VERSION=${{ steps.resolve.outputs.version }}
+          push: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
+          tags: ${{ steps.resolve.outputs.tags }}
+
+      - name: Offline image smoke tests (amd64)
+        if: steps.resolve.outputs.skip != 'true'
+        run: |
+          docker buildx build --load -f docker/Dockerfile \
+            --build-arg WARREN_CHANNEL=${{ steps.resolve.outputs.channel }} \
+            --build-arg WARREN_DAEMON_VERSION=${{ steps.resolve.outputs.version }} \
+            -t warren-vpn:test .
+          ./docker/test-image.sh warren-vpn:test

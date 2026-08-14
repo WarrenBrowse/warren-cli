@@ -1,0 +1,30 @@
+# Minimal Warren VPN container: everything sharing its network namespace
+# egresses through the tunnel, protected by the kill switch (lockdown mode,
+# on by default). See docs/DOCKER.md for the full env reference.
+services:
+  warren:
+    image: ghcr.io/warrenbrowse/warren-vpn:beta
+    container_name: warren
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    environment:
+      - WARREN_MNEMONIC_FILE=/run/secrets/warren_mnemonic
+      - WARREN_RELAY_LOCATION=fi
+    secrets:
+      - warren_mnemonic
+    restart: unless-stopped
+
+  # Any container that should ride the tunnel joins the netns:
+  whoami:
+    image: curlimages/curl
+    network_mode: "service:warren"
+    depends_on:
+      warren:
+        condition: service_healthy
+    command: ["sh", "-c", "while true; do curl -fsS https://icanhazip.com || echo 'blocked (kill switch working)'; sleep 300; done"]
+
+secrets:
+  warren_mnemonic:
+    file: ./warren_mnemonic.txt

@@ -26,7 +26,7 @@ service units for the init systems the packages do not cover (`linux/`).
 ## Local checks
 
 ```bash
-shellcheck -S warning scripts/*.sh linux/*.sh macos/*.sh docker/*.sh
+git ls-files -z '*.sh' | xargs -0 shellcheck -S warning
 sh scripts/test-install.sh
 # YAML: ruby -ryaml -e "YAML.load_file('.github/workflows/ci.yml')"
 ```

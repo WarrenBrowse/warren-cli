@@ -1,0 +1,56 @@
+# qBittorrent behind Warren with NAT-PMP port forwarding: when the exit
+# grants the public port, the up-command pushes it into qBittorrent's
+# listen_port over its Web API (the gluetun VPN_PORT_FORWARDING_UP_COMMAND
+# pattern), and the entrypoint re-points the forward rule to that same port
+# (WARREN_PORT_FORWARD_MATCH_INTERNAL, on by default) so qBittorrent listens
+# and announces on the exact port peers can reach. The granted port is also
+# readable at /tmp/warren/forwarded_port inside the warren container.
+#
+# qBittorrent's WebUI must allow localhost auth bypass (default for
+# 127.0.0.1) since both containers share one network namespace.
+services:
+  warren:
+    image: ghcr.io/warrenbrowse/warren-vpn:beta
+    container_name: warren
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    environment:
+      - WARREN_MNEMONIC_FILE=/run/secrets/warren_mnemonic
+      - WARREN_RELAY_LOCATION=fi
+      - WARREN_PORT_FORWARD_INTERNAL_PORT=6881
+      - WARREN_PORT_FORWARD_PROTOCOL=both
+      - >-
+        WARREN_PORT_FORWARD_UP_COMMAND=curl -fsS --retry 10 --retry-connrefused
+        --data-urlencode 'json={"listen_port":{{PORT}},"random_port":false,"upnp":false}'
+        http://127.0.0.1:8080/api/v2/app/setPreferences
+    ports:
+      # qBittorrent WebUI, published through the warren netns owner.
+      - "8080:8080"
+    secrets:
+      - warren_mnemonic
+    restart: unless-stopped
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    network_mode: "service:warren"
+    depends_on:
+      warren:
+        condition: service_healthy
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      - WEBUI_PORT=8080
+    volumes:
+      - qbt-config:/config
+      - ./downloads:/downloads
+    restart: unless-stopped
+
+volumes:
+  qbt-config:
+
+secrets:
+  warren_mnemonic:
+    file: ./warren_mnemonic.txt

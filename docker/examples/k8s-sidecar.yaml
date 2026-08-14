@@ -1,0 +1,67 @@
+# Warren as a Kubernetes sidecar: every container in the pod shares the pod
+# network namespace, so the whole pod egresses through the tunnel and the
+# kill switch (lockdown mode) protects it. The warren container needs
+# NET_ADMIN and /dev/net/tun.
+#
+# For cluster-wide egress through a single gateway pod, the same image works
+# under https://github.com/angelnu/pod-gateway; see docs/DOCKER.md.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: warren-mnemonic
+type: Opaque
+stringData:
+  mnemonic: "replace with the 12 or 24 word recovery phrase"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-behind-warren
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app-behind-warren
+  template:
+    metadata:
+      labels:
+        app: app-behind-warren
+    spec:
+      containers:
+        - name: warren
+          image: ghcr.io/warrenbrowse/warren-vpn:beta
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN"]
+          env:
+            - name: WARREN_MNEMONIC_FILE
+              value: /etc/warren-secret/mnemonic
+            - name: WARREN_RELAY_LOCATION
+              value: "fi"
+          volumeMounts:
+            - name: mnemonic
+              mountPath: /etc/warren-secret
+              readOnly: true
+            - name: dev-net-tun
+              mountPath: /dev/net/tun
+          startupProbe:
+            exec:
+              command: ["/usr/local/bin/warren-healthcheck"]
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command: ["/usr/local/bin/warren-healthcheck"]
+            periodSeconds: 60
+        - name: app
+          image: curlimages/curl
+          command: ["sh", "-c", "while true; do curl -fsS https://icanhazip.com; sleep 300; done"]
+      volumes:
+        - name: mnemonic
+          secret:
+            secretName: warren-mnemonic
+            defaultMode: 0400
+        - name: dev-net-tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
