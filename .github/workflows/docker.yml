@@ -88,6 +88,7 @@ jobs:
             fi
             [ -n "$version" ] || { echo "no $channel daemon release found" >&2; exit 1; }
           fi
+          prefix="$(warren_tag_prefix "$channel")"
 
           assets=$(gh release view "${prefix}${version}" --repo "$GITHUB_REPOSITORY" \
             --json assets --jq '.assets[].name')
