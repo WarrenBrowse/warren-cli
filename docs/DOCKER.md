@@ -104,10 +104,19 @@ subscription fleet-wide, public range 49152-65535). In this image:
 
    ```yaml
    - >-
-     WARREN_PORT_FORWARD_UP_COMMAND=curl -fsS --retry 10 --retry-connrefused
+     WARREN_PORT_FORWARD_UP_COMMAND=curl -fsS --retry 5 --retry-connrefused
+     --retry-max-time 20 --max-time 10 -c /tmp/qbt.cookies
+     --data-urlencode 'username=${QBT_USER:?set QBT_USER in .env}'
+     --data-urlencode 'password=${QBT_PASS:?set QBT_PASS in .env}'
+     http://127.0.0.1:8080/api/v2/auth/login &&
+     curl -fsS --max-time 10 -b /tmp/qbt.cookies
      --data-urlencode 'json={"listen_port":{{PORT}},"random_port":false,"upnp":false}'
      http://127.0.0.1:8080/api/v2/app/setPreferences
    ```
+
+   Both legs are needed: recent qBittorrent authenticates localhost too. The
+   full stack around this snippet is
+   [`docker-compose.qbittorrent.yml`](../docker/examples/docker-compose.qbittorrent.yml).
 
 3. With `WARREN_PORT_FORWARD_MATCH_INTERNAL=on` (the default) the forward
    rule is then re-pointed to that same port, so after one convergence step

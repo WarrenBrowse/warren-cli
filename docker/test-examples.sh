@@ -44,6 +44,14 @@ end
 
 puts 'kubernetes sidecar'
 k8s = File.join(repo, 'docker/examples/k8s-sidecar.yaml')
+
+# A manifest is a file people commit. Shipping a Secret with a placeholder
+# phrase in it teaches the one storage habit the docs forbid, and the
+# placeholder is what gets replaced in place, in the repo.
+check('no recovery phrase is modelled inside the manifest') do
+  docs(k8s).compact.none? { |d| d['kind'] == 'Secret' }
+end
+
 deployment = docs(k8s).find { |d| d['kind'] == 'Deployment' }
 pod = deployment['spec']['template']['spec']
 inits = pod['initContainers'] || []
@@ -116,6 +124,15 @@ end
 # over ten minutes; the entrypoint kills the hook, but the retry budget is
 # what keeps a slow WebUI from eating the whole hook budget every time.
 check('the retry budget is bounded') { !up.nil? && up.include?('--retry-max-time') }
+# Compose substitutes an unset variable with an empty string and only warns,
+# so a missing .env starts the stack with empty credentials: qBittorrent
+# answers 403, the port is never pushed, and the only signal is one WARNING
+# line under a container that stays healthy. The required-variable syntax
+# refuses to start instead.
+qbt_raw = File.read(File.join(repo, 'docker/examples/docker-compose.qbittorrent.yml'))
+check('the WebUI credentials are required, not defaulted to empty') do
+  qbt_raw.include?('${QBT_USER:?') && qbt_raw.include?('${QBT_PASS:?')
+end
 
 puts
 puts "#{$checks} checks, #{$failures} failure(s)"

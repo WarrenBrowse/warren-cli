@@ -12,6 +12,11 @@
 #   QBT_USER=admin
 #   QBT_PASS=the-password-you-set-in-the-WebUI
 #
+# Compose refuses to start without them (the `:?` form): unset, they would
+# substitute to empty strings, qBittorrent would answer 403 and the only sign
+# would be one WARNING line under a stack that looks healthy. The credentials
+# do land in the container environment, where `docker inspect` shows them.
+#
 # and set them in qBittorrent first. The linuxserver image prints a random
 # temporary password in `docker compose logs qbittorrent` on the very first
 # start; change it in the WebUI, then fill the .env in. Enabling
@@ -43,8 +48,8 @@ services:
       - >-
         WARREN_PORT_FORWARD_UP_COMMAND=curl -fsS --retry 5 --retry-connrefused
         --retry-max-time 20 --max-time 10 -c /tmp/qbt.cookies
-        --data-urlencode 'username=${QBT_USER}'
-        --data-urlencode 'password=${QBT_PASS}'
+        --data-urlencode 'username=${QBT_USER:?set QBT_USER in .env}'
+        --data-urlencode 'password=${QBT_PASS:?set QBT_PASS in .env}'
         http://127.0.0.1:8080/api/v2/auth/login &&
         curl -fsS --max-time 10 -b /tmp/qbt.cookies
         --data-urlencode 'json={"listen_port":{{PORT}},"random_port":false,"upnp":false}'

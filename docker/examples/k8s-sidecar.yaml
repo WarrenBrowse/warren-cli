@@ -17,14 +17,13 @@
 #
 # For cluster-wide egress through a single gateway pod, the same image works
 # under https://github.com/angelnu/pod-gateway; see docs/DOCKER.md.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: warren-mnemonic
-type: Opaque
-stringData:
-  mnemonic: "replace with the 12 or 24 word recovery phrase"
----
+# Create the secret out of band, so no recovery phrase ever lands in a file
+# that gets committed:
+#
+#   printf '%s' "your 12 or 24 word recovery phrase" > warren_mnemonic.txt
+#   kubectl create secret generic warren-mnemonic \
+#     --from-file=mnemonic=./warren_mnemonic.txt
+#   shred -u warren_mnemonic.txt
 apiVersion: apps/v1
 kind: Deployment
 metadata:
