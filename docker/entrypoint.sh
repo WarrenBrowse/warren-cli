@@ -59,6 +59,18 @@ require_one_of() { # <name> <value> <allowed...>
     return 1
 }
 
+# Why the connect failed, from the status `timeout(1)` returned. 124 is the
+# one status that means the command was still running when the budget ran
+# out; everything else is the CLI refusing in its own time, and calling that a
+# timeout sends the operator after a cause that is a minute and a half from
+# the truth.
+connect_failure() { # <exit status> <timeout seconds>
+    case "$1" in
+    124) printf 'tunnel did not come up within %ss\n' "$2" ;;
+    *) printf 'connect failed (exit %s); see the daemon log above\n' "$1" ;;
+    esac
+}
+
 # The port watcher runs in a background subshell, so the granted port is
 # shared through the status file, never through a shell variable.
 granted_port() {
@@ -279,8 +291,10 @@ fi
 log "connecting (timeout ${WARREN_CONNECT_TIMEOUT}s)"
 # timeout(1) execs its argument, so it cannot run the warren_cli shell
 # function: call the binary directly.
-timeout "${WARREN_CONNECT_TIMEOUT}" /usr/bin/warren connect --wait \
-    || fatal "tunnel did not come up within ${WARREN_CONNECT_TIMEOUT}s"
+connect_rc=0
+timeout "${WARREN_CONNECT_TIMEOUT}" /usr/bin/warren connect --wait || connect_rc=$?
+[ "$connect_rc" -eq 0 ] \
+    || fatal "$(connect_failure "$connect_rc" "${WARREN_CONNECT_TIMEOUT}")"
 warren_cli status | head -2
 
 # ---- port forwarding -------------------------------------------------------

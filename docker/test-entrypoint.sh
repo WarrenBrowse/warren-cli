@@ -89,6 +89,17 @@ check_contains "the refusal names the knob and the value it was given" \
 	"WARREN_LOCKDOWN must be one of: on off (got 'ON')" "$out"
 check_true "a knob with its own vocabulary keeps it" require_one_of WARREN_LAN block allow block
 
+echo "connect failures"
+# `timeout N warren connect --wait` fails for two very different reasons, and
+# reporting both as "did not come up within 90s" sent an operator looking for
+# a slow network while the daemon had refused in under a second.
+check "a command the timeout had to kill is reported as a timeout" \
+	"tunnel did not come up within 90s" \
+	"$(connect_failure 124 90)"
+check "any other failure is reported with its exit status" \
+	"connect failed (exit 1); see the daemon log above" \
+	"$(connect_failure 1 90)"
+
 echo "which mapping line is ours"
 # The daemon prints one line per configured rule. Acting on any MAPPED line
 # makes a second rule look like a new grant for ours, which flip-flops the
