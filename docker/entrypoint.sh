@@ -333,10 +333,14 @@ forward_lost() {
         run_port_hook "${WARREN_PORT_FORWARD_DOWN_COMMAND:-}" "$lost_port" down
         : > "$WARREN_PORT_FORWARD_STATUS_FILE"
     fi
-    [ "$(cat "$EXTERNAL_FILE" 2>/dev/null || true)" != "0" ] || return 0
+    lost_external=$(cat "$EXTERNAL_FILE" 2>/dev/null || true)
+    [ "$lost_external" != "0" ] || return 0
     lost_internal=$(cat "$INTERNAL_FILE")
     printf '%s\n' 0 >"$EXTERNAL_FILE"
-    log "re-requesting a server-picked public port for internal port $lost_internal"
+    # The pin is dropped for the rest of the container's life, and it can be
+    # the operator's own WARREN_PORT_FORWARD_EXTERNAL_PORT rather than the one
+    # the re-point installed, so the port being given up is named.
+    log "public port $lost_external is not available; asking the exit to pick one for internal port $lost_internal"
     warren_cli port-forward enable \
         --internal-port "$lost_internal" \
         --protocol "${WARREN_PORT_FORWARD_PROTOCOL:-both}" \

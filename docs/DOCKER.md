@@ -77,7 +77,7 @@ Compose examples live in `docker/examples/`:
 | `WARREN_HEALTH_TARGET` | | optional URL; when set the health check also probes real egress against it |
 | `WARREN_PORT_FORWARD_INTERNAL_PORT` | | setting it enables NAT-PMP port forwarding for that internal port |
 | `WARREN_PORT_FORWARD_PROTOCOL` | `both` | `tcp`, `udp` or `both` |
-| `WARREN_PORT_FORWARD_EXTERNAL_PORT` | `0` | suggested public port (49152-65535), 0 lets the exit pick |
+| `WARREN_PORT_FORWARD_EXTERNAL_PORT` | `0` | suggested public port (49152-65535), 0 lets the exit pick. A suggestion the exit cannot serve is dropped for the rest of the container's life (see below) |
 | `WARREN_PORT_FORWARD_LIFETIME` | | requested mapping lifetime in seconds, exit clamps to [60, 3600] |
 | `WARREN_PORT_FORWARD_MATCH_INTERNAL` | `on` | after a grant of public port P, re-point the rule to internal P so the app can listen and announce on the same port (torrent clients need this) |
 | `WARREN_PORT_FORWARD_UP_COMMAND` | | run (via `sh -c`, inside this container) each time a public port is granted, `{{PORT}}` substituted |
@@ -138,10 +138,15 @@ When the exit stops serving the mapping (a `failed` or `disabled` status line
 for this container's rule), the down command runs once, the status file is
 emptied so nothing keeps reading a port that no longer exists, and the rule
 goes back to a server-picked public port. That last step matters because a
-pinned port is a contract the daemon never substitutes: the rule the re-point
-installs asks for one exact port, and if another client is holding it the
-mapping stays failed for the container's whole life unless something asks for
-a different one.
+pinned port is a contract the daemon never substitutes: the rule asks for one
+exact port, and if another client is holding it the mapping stays failed for
+the container's whole life unless something asks for a different one.
+
+The pin that gets dropped is whichever one is current: the port the re-point
+installed, or the `WARREN_PORT_FORWARD_EXTERNAL_PORT` you asked for. Keeping a
+public port at all wins over keeping that exact one, so the container gives it
+up permanently and the log names it (`public port 51413 is not available`).
+Recreate the container to ask for it again.
 
 Three things the container guarantees around those hooks:
 

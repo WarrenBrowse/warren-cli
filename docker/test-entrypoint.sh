@@ -294,7 +294,7 @@ watch() { # watch <status line>
 "
 	: > "$CALLS"
 	: > "$TMP/order"
-	port_watcher > /dev/null 2>&1
+	port_watcher > "$TMP/watch.log" 2>&1
 }
 
 printf '6881\n' > "$INTERNAL_FILE"
@@ -361,6 +361,65 @@ check "and asks for a server-picked port instead of the pin that failed" \
 	"$(cat "$CALLS")"
 watch '60000/TCP+UDP: failed (suggested port in use)'
 check "a repeated failure for the same rule changes nothing more" "" "$(cat "$CALLS")$(cat "$TMP/order")"
+
+# The daemon can refuse the enable after the remove has already happened, and
+# the container then holds no rule at all: one slot, but an empty one, and no
+# later status line would ever mention it again.
+warren_cli() {
+	case "$*" in
+	"port-forward enable --internal-port 49999"*) printf '%s\n' "$*" >> "$CALLS"; return 1 ;;
+	*) printf '%s\n' "$*" >> "$CALLS" ;;
+	esac
+}
+printf '6881\n' > "$INTERNAL_FILE"
+printf '7000\n' > "$EXTERNAL_FILE"
+rm -f "$WARREN_PORT_FORWARD_STATUS_FILE"
+watch '6881/TCP+UDP: MAPPED, public port 49999'
+check "an enable that failed puts the rule it removed back" \
+	"port-forward remove --internal-port 6881 --protocol both
+port-forward enable --internal-port 49999 --protocol both --external-port 49999
+port-forward enable --internal-port 6881 --protocol both --external-port 7000" \
+	"$(cat "$CALLS")"
+check "and the watcher keeps naming the rule it owns" "6881" "$(cat "$INTERNAL_FILE")"
+check_contains "and says so" "restoring internal port 6881" "$(cat "$TMP/watch.log")"
+
+warren_cli() {
+	case "$*" in
+	"port-forward enable"*) printf '%s\n' "$*" >> "$CALLS"; return 1 ;;
+	*) printf '%s\n' "$*" >> "$CALLS" ;;
+	esac
+}
+printf '6881\n' > "$INTERNAL_FILE"
+printf '7000\n' > "$EXTERNAL_FILE"
+rm -f "$WARREN_PORT_FORWARD_STATUS_FILE"
+watch '6881/TCP+UDP: MAPPED, public port 49999'
+check_contains "a restore the daemon refuses too is reported" \
+	"could not be restored" "$(cat "$TMP/watch.log")"
+
+# Same for the fallback: a re-request the daemon refuses leaves the container
+# with no mapping and nothing else would ask again.
+printf '6881\n' > "$INTERNAL_FILE"
+printf '7000\n' > "$EXTERNAL_FILE"
+printf '7000\n' > "$WARREN_PORT_FORWARD_STATUS_FILE"
+watch '6881/TCP+UDP: failed (suggested port in use)'
+check_contains "a re-request the daemon refuses is reported" \
+	"could not re-request a public port" "$(cat "$TMP/watch.log")"
+
+# The pin that gets dropped can be the operator's own
+# WARREN_PORT_FORWARD_EXTERNAL_PORT, seeded at boot by the entrypoint, and it
+# is dropped for the container's whole life, so the log names the port being
+# given up rather than only the rule that keeps going.
+warren_cli() { printf '%s\n' "$*" >> "$CALLS"; }
+WARREN_PORT_FORWARD_EXTERNAL_PORT=51413
+printf '6881\n' > "$INTERNAL_FILE"
+printf '%s\n' "$WARREN_PORT_FORWARD_EXTERNAL_PORT" > "$EXTERNAL_FILE"
+printf '51413\n' > "$WARREN_PORT_FORWARD_STATUS_FILE"
+watch '6881/TCP+UDP: failed (suggested port in use)'
+check_contains "the public port the operator asked for is named when it is dropped" \
+	"public port 51413 is not available" "$(cat "$TMP/watch.log")"
+check "and the rule goes back to a server pick" \
+	"port-forward enable --internal-port 6881 --protocol both --external-port 0" \
+	"$(cat "$CALLS")"
 
 echo "the watcher stops for good"
 # `kill $WATCHER_PID` reached the supervisor only. The status stream and the
