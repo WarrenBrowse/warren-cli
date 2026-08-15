@@ -145,7 +145,16 @@ mapping_public_port() {
     *) return 0 ;;
     esac
     [ "${map_line%%/*}" = "$map_internal" ] || return 0
-    printf '%s\n' "${map_line##*public port }"
+    map_port="${map_line##*public port }"
+    # The port ends up in a sed replacement and then in `sh -c`, so nothing
+    # but digits may leave this function.
+    case "$map_port" in
+    '' | *[!0-9]*)
+        log "WARNING: ignoring a port-forward status line whose public port is not a number" >&2
+        return 0
+        ;;
+    esac
+    printf '%s\n' "$map_port"
 }
 
 # Identities (internal port + CLI protocol name) of the rules the daemon has

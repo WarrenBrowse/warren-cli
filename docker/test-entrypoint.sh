@@ -123,6 +123,20 @@ check "a MAPPED line carrying no public port grants nothing" \
 	"" \
 	"$(mapping_public_port '6881/TCP+UDP: MAPPED' 6881)"
 
+# The port is spliced into a sed script and then into `sh -c`, so it must be
+# digits before it reaches either: a status line reading `public port 1;id`
+# would otherwise run `id` with the hook's privileges, and a value carrying a
+# slash would corrupt the substitution.
+check "a public port that is not a number grants nothing" \
+	"" \
+	"$(mapping_public_port '6881/TCP+UDP: MAPPED, public port 1;id' 6881 2>/dev/null)"
+check "a public port with a slash in it grants nothing" \
+	"" \
+	"$(mapping_public_port '6881/TCP+UDP: MAPPED, public port 5/1' 6881 2>/dev/null)"
+check_contains "and the refusal is logged" \
+	"public port is not a number" \
+	"$(mapping_public_port '6881/TCP+UDP: MAPPED, public port 1;id' 6881 2>&1 >/dev/null)"
+
 echo "configured rule identities"
 # `enable --internal-port` upserts, and the rules are persisted in the
 # settings dir, so a re-pointed rule from a previous run survives a restart
