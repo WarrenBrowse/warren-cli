@@ -26,8 +26,12 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 WARREN_INSTALL_LIB=1
 export WARREN_INSTALL_LIB
-# shellcheck source=../scripts/install.sh
-. "$REPO_DIR/scripts/install.sh"
+# The image build sources this file on its own, for warren_local_deb, with the
+# installer library already loaded and no repo layout around it.
+if ! command -v warren_tag_prefix > /dev/null 2>&1; then
+	# shellcheck source=../scripts/install.sh
+	. "$REPO_DIR/scripts/install.sh"
+fi
 
 # The newest release version of a channel's series, read from a list of tag
 # names on stdin. Fails when that series has no release, rather than falling
@@ -37,6 +41,30 @@ warren_version_from_tags() { # <channel>
 	vft_tag="$(warren_latest_tag "$vft_prefix")"
 	[ -n "$vft_tag" ] || return 1
 	printf '%s\n' "${vft_tag#"$vft_prefix"}"
+}
+
+# The .deb to unpack when building from a local directory. Refuses to choose:
+# two candidates for one architecture means the answer to "which daemon does
+# this image ship" is a guess, which is the failure the version pinning above
+# exists to prevent.
+warren_local_deb() { # <dir> <targetarch>
+	wld_matches=""
+	wld_count=0
+	for wld_deb in "$1"/warren-vpn-daemon*_"$2".deb; do
+		[ -f "$wld_deb" ] || continue
+		wld_matches="$wld_matches $wld_deb"
+		wld_count=$((wld_count + 1))
+	done
+	if [ "$wld_count" -eq 0 ]; then
+		echo "no warren-vpn-daemon*_$2.deb in $1" >&2
+		return 1
+	fi
+	if [ "$wld_count" -gt 1 ]; then
+		echo "several .deb match warren-vpn-daemon*_$2.deb in $1:$wld_matches" >&2
+		echo "keep exactly one: which daemon this image ships must not be a guess" >&2
+		return 1
+	fi
+	printf '%s\n' "${wld_matches# }"
 }
 
 # The arguments handed to `docker build`, in one place so the version can

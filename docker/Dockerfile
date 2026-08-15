@@ -29,14 +29,15 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 COPY scripts/install.sh /warren-install-lib.sh
+COPY docker/build.sh /warren-build-lib.sh
 COPY docker/local-debs/ /local-debs/
 RUN set -eu; \
+    WARREN_INSTALL_LIB=1 . /warren-install-lib.sh; \
     deb=""; \
     if [ -n "$LOCAL_DEB" ]; then \
-      deb="$(ls /local-debs/warren-vpn-daemon*_"$TARGETARCH".deb 2>/dev/null | head -1)"; \
-      [ -n "$deb" ] || { echo "LOCAL_DEB set but no warren-vpn-daemon*_$TARGETARCH.deb in docker/local-debs/" >&2; exit 1; }; \
+      WARREN_BUILD_LIB=1 . /warren-build-lib.sh; \
+      deb="$(warren_local_deb /local-debs "$TARGETARCH")"; \
     else \
-      WARREN_INSTALL_LIB=1 . /warren-install-lib.sh; \
       case "$TARGETARCH" in \
         amd64) machine=x86_64 ;; \
         arm64) machine=aarch64 ;; \

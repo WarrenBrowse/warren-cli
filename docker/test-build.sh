@@ -43,6 +43,17 @@ check_fails() { # check_fails <description> <command...>
 	fi
 }
 
+check_contains() { # check_contains <description> <needle> <haystack>
+	checks=$((checks + 1))
+	case "$3" in
+	*"$2"*) printf '  ok   %s\n' "$1" ;;
+	*)
+		printf '  FAIL %s\n       expected to contain: %s\n       actual: %s\n' "$1" "$2" "$3"
+		failures=$((failures + 1))
+		;;
+	esac
+}
+
 tags() {
 	printf 'daemon-beta-v1.9.1\ndaemon-beta-v1.11.0\ndaemon-v1.2.1\n'
 }
@@ -69,6 +80,28 @@ check "the resolved version is pinned as a build-arg" \
 check "a local .deb build carries no version to resolve" \
 	"--build-arg LOCAL_DEB=1 -f docker/Dockerfile -t warren-vpn:test ." \
 	"$(warren_build_args beta "" warren-vpn:test local)"
+
+
+echo "local .deb selection"
+# The same invariant as the version pinning above, for the local path: a build
+# must never quietly pick which daemon it ships. `ls | head -1` took the
+# alphabetically first match, so two versions in docker/local-debs/ reshipped
+# the older one with nothing in the output to tell the runs apart.
+LOCAL_DIR="$(mktemp -d)"
+trap 'rm -rf "$LOCAL_DIR"' EXIT INT TERM
+check_fails "an empty directory has nothing to unpack" \
+	warren_local_deb "$LOCAL_DIR" arm64
+: > "$LOCAL_DIR/warren-vpn-daemon-beta_1.1.15_arm64.deb"
+check "the one matching .deb is the one that ships" \
+	"$LOCAL_DIR/warren-vpn-daemon-beta_1.1.15_arm64.deb" \
+	"$(warren_local_deb "$LOCAL_DIR" arm64)"
+check_fails "another architecture is not a match" \
+	warren_local_deb "$LOCAL_DIR" amd64
+: > "$LOCAL_DIR/warren-vpn-daemon-beta_1.2.0_arm64.deb"
+check_fails "two candidates are refused rather than guessed" \
+	warren_local_deb "$LOCAL_DIR" arm64
+check_contains "and the refusal names them" "1.2.0_arm64.deb" \
+	"$(warren_local_deb "$LOCAL_DIR" arm64 2>&1 || true)"
 
 printf '\n%d checks, %d failure(s)\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]
