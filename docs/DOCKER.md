@@ -264,6 +264,12 @@ sh docker/test-build.sh        # version resolution and build arguments
 sh docker/test-examples.sh     # the example manifests (needs ruby)
 ```
 
+A `docker/` change ships when it lands on `main`: `.github/workflows/docker.yml`
+rebuilds the image from the latest released daemon of the channel, smoke-tests
+it on both architectures and republishes the rolling tag (`:beta` today). The
+image is this repo's `docker/` tree plus a released daemon, so committing a fix
+and stopping there used to leave the registry on the old entrypoint.
+
 `docker/test-image.sh` runs the offline smoke tests against a built image;
 with `WARREN_TEST_MNEMONIC_FILE` pointing at a subscribed phrase it also runs
 the live end-to-end checks (connect, egress, kill switch, port forward).
