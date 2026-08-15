@@ -44,6 +44,16 @@ else
     fail "expected a mnemonic refusal, got rc=$rc: $out"
 fi
 
+say "offline: entrypoint refuses a mistyped kill switch"
+# `WARREN_LOCKDOWN=ON` used to mean "off": the container ran with no kill
+# switch and reported a value the operator never set.
+out=$(drun --cap-add NET_ADMIN --device /dev/net/tun -e WARREN_LOCKDOWN=ON "$IMAGE" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "WARREN_LOCKDOWN must be one of"; then
+    pass "refused a kill switch value it does not know"
+else
+    fail "expected a refusal of WARREN_LOCKDOWN=ON, got rc=$rc: $out"
+fi
+
 say "offline: healthcheck is unhealthy when the daemon is not running"
 if drun --entrypoint /usr/local/bin/warren-healthcheck "$IMAGE" >/dev/null 2>&1; then
     fail "healthcheck reported healthy with no daemon"

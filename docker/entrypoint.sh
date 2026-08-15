@@ -367,7 +367,12 @@ MNEMONIC=$(read_secret WARREN_MNEMONIC_FILE WARREN_MNEMONIC)
 VOUCHER=$(read_secret WARREN_VOUCHER_FILE WARREN_VOUCHER)
 strip_secrets_from_environment
 
+# Every closed-set knob is checked before anything is started: an operator
+# typo costs a second and a clear message, never a container that runs on for
+# hours with a setting nobody asked for.
 ALLOW_INACTIVE="${WARREN_ALLOW_INACTIVE:-off}"
+require_one_of WARREN_LAN "${WARREN_LAN}" allow block || exit 1
+require_one_of WARREN_LOCKDOWN "${WARREN_LOCKDOWN}" on off || exit 1
 require_one_of WARREN_ALLOW_INACTIVE "$ALLOW_INACTIVE" on off || exit 1
 require_one_of WARREN_PORT_FORWARD_MATCH_INTERNAL \
     "${WARREN_PORT_FORWARD_MATCH_INTERNAL:-on}" on off || exit 1
@@ -476,12 +481,10 @@ else
 fi
 
 # ---- settings --------------------------------------------------------------
-require_one_of WARREN_LAN "${WARREN_LAN}" allow block || exit 1
 warren_cli lan set "${WARREN_LAN}" >/dev/null || fatal "lan set ${WARREN_LAN} failed"
 
 # The operator's own value goes to the CLI, so no typo can ever be read as a
 # request to disable the kill switch.
-require_one_of WARREN_LOCKDOWN "${WARREN_LOCKDOWN}" on off || exit 1
 warren_cli lockdown-mode set "${WARREN_LOCKDOWN}" >/dev/null \
     || fatal "lockdown-mode set ${WARREN_LOCKDOWN} failed"
 if [ "${WARREN_LOCKDOWN}" = "on" ]; then
