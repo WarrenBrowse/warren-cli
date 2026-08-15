@@ -31,6 +31,19 @@ jobs:
       - name: Installer resolution tests
         run: sh scripts/test-install.sh
 
+      # The container glue decides things nothing else checks: which status
+      # line is this container's, how long an operator hook may run, whether
+      # the daemon version reaches the build as a cache key, and whether the
+      # example manifests start the tunnel before the workload.
+      - name: Container entrypoint tests
+        run: sh docker/test-entrypoint.sh
+
+      - name: Image build resolution tests
+        run: sh docker/test-build.sh
+
+      - name: Example manifest tests
+        run: sh docker/test-examples.sh
+
   powershell:
     runs-on: ubuntu-latest
     steps:

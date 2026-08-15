@@ -7,9 +7,12 @@
 # release-channel contract); asset names are resolved through the same
 # sourceable functions the installer uses, so the two cannot drift.
 #
-# Build the latest release of the live (beta) channel:
-#   docker build -f docker/Dockerfile -t warren-vpn .
-# Pin a channel and version:
+# The daemon version is a required build-arg: it is what makes the download
+# part of Docker's cache key. Use docker/build.sh, which resolves the latest
+# release of a channel and passes it:
+#   ./docker/build.sh                    latest release of the live (beta) channel
+#   ./docker/build.sh --channel prod
+# Or pin it yourself:
 #   docker build -f docker/Dockerfile \
 #     --build-arg WARREN_CHANNEL=prod --build-arg WARREN_DAEMON_VERSION=1.2.1 \
 #     -t warren-vpn .
@@ -39,18 +42,20 @@ RUN set -eu; \
         arm64) machine=aarch64 ;; \
         *) echo "unsupported TARGETARCH $TARGETARCH" >&2; exit 1 ;; \
       esac; \
-      prefix="$(warren_tag_prefix "$WARREN_CHANNEL")"; \
-      version="$WARREN_DAEMON_VERSION"; \
-      if [ -z "$version" ]; then \
-        tag="$(curl -fsSL 'https://api.github.com/repos/WarrenBrowse/warren-cli/releases?per_page=100' \
-          | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4 \
-          | warren_latest_tag "$prefix")"; \
-        [ -n "$tag" ] || { echo "no release found for channel $WARREN_CHANNEL" >&2; exit 1; }; \
-        version="${tag#"$prefix"}"; \
-      fi; \
-      asset="$(warren_asset Linux deb "$version" "$WARREN_CHANNEL" "$machine")"; \
       url="$DEB_URL"; \
-      [ -n "$url" ] || url="https://github.com/WarrenBrowse/warren-cli/releases/download/${prefix}${version}/${asset}"; \
+      if [ -z "$url" ]; then \
+        [ -n "$WARREN_DAEMON_VERSION" ] || { \
+          echo "WARREN_DAEMON_VERSION is required." >&2; \
+          echo "Resolving the latest release from inside this layer would be invisible to" >&2; \
+          echo "Docker's cache key: the same build command, run again after a daemon" >&2; \
+          echo "release, would reuse the cached layer and reship the old daemon. Run" >&2; \
+          echo "./docker/build.sh (it resolves the version and passes it here), or pass" >&2; \
+          echo "--build-arg WARREN_DAEMON_VERSION=x.y.z yourself." >&2; \
+          exit 1; }; \
+        prefix="$(warren_tag_prefix "$WARREN_CHANNEL")"; \
+        asset="$(warren_asset Linux deb "$WARREN_DAEMON_VERSION" "$WARREN_CHANNEL" "$machine")"; \
+        url="https://github.com/WarrenBrowse/warren-cli/releases/download/${prefix}${WARREN_DAEMON_VERSION}/${asset}"; \
+      fi; \
       echo "fetching $url"; \
       deb=/tmp/warren.deb; \
       curl -fSL -o "$deb" "$url"; \
