@@ -346,12 +346,14 @@ port_watcher() {
 	printf 'tick\n' >> "$TICKS"
 	# The second run lives long enough to count as healthy, which must clear
 	# the restart budget: a container up for weeks is not a flapping watcher.
-	[ "$(wc -l < "$TICKS")" -eq 2 ] && sleep 1
+	# Two seconds against a threshold of two: a run that does nothing can
+	# still measure one second by straddling a second boundary.
+	[ "$(wc -l < "$TICKS")" -eq 2 ] && sleep 2
 	return 0
 }
 port_watcher_fatal() { printf 'gave up after %s\n' "$1" >> "$TICKS"; }
 WARREN_PORT_WATCHER_BACKOFF=0 \
-	WARREN_PORT_WATCHER_HEALTHY_SECS=1 \
+	WARREN_PORT_WATCHER_HEALTHY_SECS=2 \
 	WARREN_PORT_WATCHER_MAX_RESTARTS=3 \
 	supervise_port_watcher > /dev/null 2>&1 || true
 check "a watcher that keeps dying is restarted, then given up on loudly" \
