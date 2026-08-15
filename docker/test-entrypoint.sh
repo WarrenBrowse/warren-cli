@@ -80,6 +80,18 @@ check_fails() { # check_fails <description> <command...>
 	fi
 }
 
+echo "which identity is running"
+# A state volume wins over WARREN_MNEMONIC: the entrypoint skips the login
+# when the volume already holds an identity, so a phrase rotated in the
+# compose file changes nothing and the container keeps running as the old
+# account. Telling the two apart is a comparison of the phrases themselves,
+# in the form the daemon stores them.
+check_true "the same phrase written differently is the same identity" \
+	same_phrase "Word One  Two" "word one two"
+check_fails "a different phrase is a different identity" \
+	same_phrase "word one two" "word one three"
+check_fails "no stored phrase is not a match" same_phrase "" "word one two"
+
 echo "closed-set knobs"
 # A mistyped kill switch used to mean "off": the entrypoint compared against
 # the exact string "on" and took everything else as a request to disable it,

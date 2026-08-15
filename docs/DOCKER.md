@@ -209,11 +209,16 @@ gates nothing but that container.
   (prod). Prefer `WARREN_MNEMONIC_FILE` with a compose/Kubernetes secret, do
   not bake the phrase into images or env defaults, and treat any persisted
   state volume as secret material.
-- **State volume is optional.** Persist `/etc/warren-vpn-beta` and
-  `/var/cache/warren-vpn-beta` (drop `-beta` on the prod image) to keep
-  login, settings and the relay cache across recreates; or persist nothing
-  and let the entrypoint log in from the secret every start (the container
-  is then fully disposable).
+- **State volume is optional, and it wins over the phrase.** Persist
+  `/etc/warren-vpn-beta` and `/var/cache/warren-vpn-beta` (drop `-beta` on the
+  prod image) to keep login, settings and the relay cache across recreates; or
+  persist nothing and let the entrypoint log in from the secret every start
+  (the container is then fully disposable). When the volume already holds an
+  identity the entrypoint does not log in again, so changing
+  `WARREN_MNEMONIC_FILE` alone switches nothing: the container keeps running
+  as the account in the volume. It compares the two and logs a `WARNING`
+  naming the trap; to actually switch identity, delete the volume (or run
+  `warren account login` inside the container).
 - The image needs `--cap-add NET_ADMIN` and `--device /dev/net/tun`; it uses
   nftables inside its own namespace and never touches the host firewall.
 - DNS inside the namespace is rewritten to the in-tunnel resolver by the

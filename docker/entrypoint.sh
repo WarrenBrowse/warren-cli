@@ -84,6 +84,17 @@ require_one_of() { # <name> <value> <allowed...>
     return 1
 }
 
+# Whether two recovery phrases are the same identity. The daemon stores the
+# canonical form (lowercase, single-spaced), so a phrase typed with different
+# spacing or case is the same account and must not be reported as a mismatch.
+# Values travel through pipes, never through an argument list.
+normalize_phrase() {
+    printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//'
+}
+same_phrase() { # <phrase> <phrase>
+    [ -n "$1" ] && [ "$(normalize_phrase "$1")" = "$(normalize_phrase "$2")" ]
+}
+
 # Why the connect failed, from the status `timeout(1)` returned. 124 is the
 # one status that means the command was still running when the budget ran
 # out; everything else is the CLI refusing in its own time, and calling that a
@@ -422,6 +433,19 @@ trap shutdown TERM INT
 # ---- account ---------------------------------------------------------------
 if warren_cli account get 2>/dev/null | grep -q '^Address:'; then
     log "already logged in (state volume)"
+    if [ -n "$MNEMONIC" ]; then
+        # The login is skipped, so the volume decides which identity runs and
+        # a phrase rotated in the compose file would be ignored silently, on
+        # someone else's subscription. The CLI cannot derive an address from a
+        # phrase without adopting it, so the comparison is on the phrases.
+        STORED=$(warren_cli warren mnemonic export 2>/dev/null | tail -1)
+        if [ -z "$STORED" ]; then
+            log "WARNING: could not read the stored identity; the state volume decides which identity runs, not WARREN_MNEMONIC[_FILE]"
+        elif ! same_phrase "$STORED" "$MNEMONIC"; then
+            log "WARNING: the state volume holds a different identity than WARREN_MNEMONIC[_FILE], and the volume wins; drop the volume to switch identity"
+        fi
+        STORED=""
+    fi
 elif [ -n "$MNEMONIC" ]; then
     log "restoring identity from mnemonic"
     printf '%s\n' "$MNEMONIC" | warren_cli account login >/dev/null \
