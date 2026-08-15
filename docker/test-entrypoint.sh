@@ -165,6 +165,29 @@ out="$(run_port_hook 'exit 3' 51413 up 2>&1)"
 check_contains "a failing hook is reported, not swallowed" "up command failed" "$out"
 check_true "a failing hook does not abort the watcher" run_port_hook 'exit 3' 51413 up
 
+# A hook child inherits the entrypoint's environment. The phrase itself was
+# never exported, but the pointer to it was: WARREN_MNEMONIC_FILE named a file
+# the child could read.
+WARREN_MNEMONIC=phrase WARREN_MNEMONIC_FILE=/run/secrets/m \
+	WARREN_VOUCHER=code WARREN_VOUCHER_FILE=/run/secrets/v
+export WARREN_MNEMONIC WARREN_MNEMONIC_FILE WARREN_VOUCHER WARREN_VOUCHER_FILE
+strip_secrets_from_environment
+run_port_hook "env >$TMP/hookenv" 51413 up > /dev/null 2>&1
+check "no secret, and no pointer to one, reaches a hook child" \
+	"0" "$(grep -c -E '^WARREN_(MNEMONIC|VOUCHER)' "$TMP/hookenv" || true)"
+
+# One marker path per hook INVOCATION: $$ is the same in every subshell, so
+# the watcher's down hook and the shutdown down hook shared a path and could
+# each report the other's timeout.
+run_port_hook 'true' 51413 down > /dev/null 2>&1
+# hook_marker is set by run_port_hook, in this shell.
+# shellcheck disable=SC2154
+first_marker="$hook_marker"
+run_port_hook 'true' 51413 down > /dev/null 2>&1
+check "each hook invocation gets its own kill marker" \
+	"different" \
+	"$([ "$first_marker" != "$hook_marker" ] && echo different || echo shared)"
+
 # A hook that never returns used to be awaited forever: the watcher stopped
 # consuming status lines (no later grant was ever seen) and, on the stop
 # path, the whole container grace period was burnt before the disconnect.

@@ -68,7 +68,7 @@ Compose examples live in `docker/examples/`:
 | variable | default | meaning |
 |---|---|---|
 | `WARREN_MNEMONIC_FILE` / `WARREN_MNEMONIC` | | recovery phrase; the file variant wins and is the one to use (a plain env var is visible in `docker inspect`) |
-| `WARREN_VOUCHER_FILE` / `WARREN_VOUCHER` | | voucher redeemed at start; a redeem failure only warns (already-redeemed is normal on restart) |
+| `WARREN_VOUCHER_FILE` / `WARREN_VOUCHER` | | voucher redeemed at start; a redeem failure only warns (already-redeemed is normal on restart). The CLI takes the code as an argument, so it is readable in the container's process list for as long as the redeem runs; the recovery phrase is not (it goes in on stdin) |
 | `WARREN_RELAY_LOCATION` | any | exit constraint, passed to `warren relay set location` verbatim (e.g. `fi`, `fi hel`) |
 | `WARREN_LOCKDOWN` | `on` | kill switch (lockdown mode). Leave it on |
 | `WARREN_LAN` | `allow` | local network sharing; sidecars and published ports need it |

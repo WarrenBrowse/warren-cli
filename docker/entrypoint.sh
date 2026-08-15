@@ -62,6 +62,13 @@ read_secret() {
 
 warren_cli() { /usr/bin/warren "$@"; }
 
+# Everything started from here inherits this environment, hooks included. The
+# secrets are read once, into shell variables that no child sees; the pointers
+# to them are just as good to an attacker with a hook, so they go too.
+strip_secrets_from_environment() {
+    unset WARREN_MNEMONIC WARREN_MNEMONIC_FILE WARREN_VOUCHER WARREN_VOUCHER_FILE
+}
+
 # A knob whose vocabulary is closed: anything else is an operator typo, and a
 # typo must stop the container rather than be translated into a working call
 # with a different meaning. `WARREN_LOCKDOWN=ON` used to read as "off" and
@@ -100,16 +107,13 @@ granted_port() {
 # grant is ever seen) and, on the stop path, burn the whole container grace
 # period before the disconnect runs. The bound is a shell watchdog rather
 # than timeout(1) so the same code is exercised by the unit tests on any
-# POSIX host; SIGTERM first, SIGKILL five seconds later. Like timeout(1), it
-# signals the command it started, not that command's own descendants: what
-# is guaranteed is that the watcher (or the stop path) gets control back.
+# POSIX host; SIGTERM first, SIGKILL five seconds later. What is guaranteed
+# is that the watcher, or the stop path, always gets control back.
 run_port_hook() {
     hook_cmd="$1"; hook_port="$2"; hook_name="$3"
     hook_budget="${4:-${WARREN_PORT_HOOK_TIMEOUT:-30}}"
     [ -n "$hook_cmd" ] || return 0
     resolved=$(printf '%s' "$hook_cmd" | sed "s/{{PORT}}/$hook_port/g")
-    hook_marker="${WARREN_HOOK_STATE_DIR:-/tmp}/warren-hook-$hook_name-$$.killed"
-    rm -f "$hook_marker"
     log "running port-forward $hook_name command"
     # Own process group where setsid exists (it does in the image), so the
     # kill below reaches what the hook itself started. Signalling only the
@@ -121,6 +125,11 @@ run_port_hook() {
         sh -c "$resolved" &
     fi
     hook_pid=$!
+    # Named after the hook's own pid: $$ is the main shell in every subshell,
+    # so a down hook in the watcher and a down hook on the stop path used to
+    # share one marker path and could each report the other's timeout.
+    hook_marker="${WARREN_HOOK_STATE_DIR:-/tmp}/warren-hook-$hook_name-$hook_pid.killed"
+    rm -f "$hook_marker"
     # The watchdog writes nothing to the caller's stdout: a background process
     # holding that pipe keeps a command substitution around it waiting, long
     # after the hook it watches is gone.
@@ -345,7 +354,7 @@ fi
 
 MNEMONIC=$(read_secret WARREN_MNEMONIC_FILE WARREN_MNEMONIC)
 VOUCHER=$(read_secret WARREN_VOUCHER_FILE WARREN_VOUCHER)
-unset WARREN_MNEMONIC WARREN_VOUCHER
+strip_secrets_from_environment
 
 ALLOW_INACTIVE="${WARREN_ALLOW_INACTIVE:-off}"
 require_one_of WARREN_ALLOW_INACTIVE "$ALLOW_INACTIVE" on off || exit 1
@@ -423,6 +432,9 @@ fi
 MNEMONIC=""
 
 if [ -n "$VOUCHER" ]; then
+    # The CLI takes the code as an argument (no stdin path, unlike login), so
+    # it is visible in /proc for the length of the call. Documented in
+    # docs/DOCKER.md rather than worked around here.
     if warren_cli account redeem "$VOUCHER" >/dev/null 2>&1; then
         log "voucher redeemed"
     else
