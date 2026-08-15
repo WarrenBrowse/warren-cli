@@ -83,7 +83,7 @@ Compose examples live in `docker/examples/`:
 | `WARREN_PORT_FORWARD_UP_COMMAND` | | run (via `sh -c`, inside this container) each time a public port is granted, `{{PORT}}` substituted |
 | `WARREN_PORT_FORWARD_DOWN_COMMAND` | | run when the port is released or replaced, `{{PORT}}` substituted |
 | `WARREN_PORT_FORWARD_STATUS_FILE` | `/tmp/warren/forwarded_port` | the granted public port, one decimal, rewritten on change |
-| `WARREN_PORT_HOOK_TIMEOUT` | `30` | seconds a hook may run before it is killed (SIGTERM, then SIGKILL 5s later) |
+| `WARREN_PORT_HOOK_TIMEOUT` | `30` | seconds a hook may run before it, and what it started, are killed (SIGTERM, then SIGKILL 5s later) |
 | `WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT` | `5` | same bound on the stop path; keep it well under the orchestrator's stop grace so the disconnect still runs |
 
 ## Port forwarding

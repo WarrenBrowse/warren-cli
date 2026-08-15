@@ -114,17 +114,32 @@ check_true "a failing hook does not abort the watcher" run_port_hook 'exit 3' 51
 # A hook that never returns used to be awaited forever: the watcher stopped
 # consuming status lines (no later grant was ever seen) and, on the stop
 # path, the whole container grace period was burnt before the disconnect.
+# What is bounded is when the CALLER gets control back, so these two go
+# through a file: a capture pipe stays open as long as any descendant of the
+# hook still holds it, which is a property of the hook, not of the bound.
 start="$(date +%s)"
-out="$(WARREN_PORT_HOOK_TIMEOUT=1 run_port_hook 'sleep 60' 51413 up 2>&1)"
+WARREN_PORT_HOOK_TIMEOUT=1 run_port_hook 'sleep 60' 51413 up > "$TMP/up.log" 2>&1
 elapsed=$(($(date +%s) - start))
-check_contains "a hook that never returns is killed and says so" "timed out" "$out"
-check_true "and it is killed within its budget" [ "$elapsed" -lt 15 ]
+check_contains "a hook that never returns is killed and says so" "timed out" "$(cat "$TMP/up.log")"
+check_true "and the caller has control back within the budget" [ "$elapsed" -lt 15 ]
 
 start="$(date +%s)"
-out="$(run_port_hook 'sleep 60' 51413 down 1 2>&1)"
+run_port_hook 'sleep 60' 51413 down 1 > "$TMP/down.log" 2>&1
 elapsed=$(($(date +%s) - start))
-check_contains "the shutdown path can ask for a smaller budget" "timed out" "$out"
+check_contains "the shutdown path can ask for a smaller budget" "timed out" "$(cat "$TMP/down.log")"
 check_true "which is honoured" [ "$elapsed" -lt 15 ]
+
+# An operator hook is a curl or a pipeline, so the shell that runs it is
+# rarely the process doing the work. Where the image can put the hook in its
+# own process group, the budget applies to that whole group.
+if command -v setsid > /dev/null 2>&1; then
+	run_port_hook "sh -c 'sleep 3; printf x >$TMP/orphan' & wait" 51413 up 1 \
+		> "$TMP/orphan.log" 2>&1
+	sleep 5
+	check "what the hook started is killed with it" "" "$(cat "$TMP/orphan" 2>/dev/null || true)"
+else
+	echo "  skip what the hook started is killed with it (no setsid on this host)"
+fi
 
 printf '\n%d checks, %d failure(s)\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]
