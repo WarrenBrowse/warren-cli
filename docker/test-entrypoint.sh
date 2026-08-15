@@ -529,5 +529,25 @@ rc=0
 check "a stop the watcher forced exits non-zero" "1" "$rc"
 rm -f "$WATCHER_FAILED_FILE" "$WATCHER_STOPPING_FILE"
 
+echo "which identity the state volume holds"
+# The stored phrase is the last line of `warren warren mnemonic export`, whose
+# producer is warren-app's mullvad-cli `warren::mnemonic_export`: two warning
+# lines, a blank one, then the phrase. A hint line appended below it there
+# would make every restart with a state volume report a different identity,
+# so the format the entrypoint depends on is pinned here too.
+cat > "$STUB_BIN/timeout" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" > "$TMP/identity-args"
+cat "$TMP/identity-out"
+EOF
+chmod +x "$STUB_BIN/timeout"
+printf 'WARNING: anyone with this recovery phrase controls your Warren identity and its subscription.\nWrite it down offline. Never share it or store it in the cloud.\n\nword one two\n' \
+	> "$TMP/identity-out"
+check "the stored phrase is the last line the CLI prints" "word one two" "$(stored_identity)"
+check "and the read is bounded" \
+	"10 /usr/bin/warren warren mnemonic export" "$(cat "$TMP/identity-args")"
+: > "$TMP/identity-out"
+check "a read that produced nothing is not an identity" "" "$(stored_identity)"
+
 printf '\n%d checks, %d failure(s)\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]

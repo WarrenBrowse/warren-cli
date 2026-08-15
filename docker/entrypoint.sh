@@ -143,6 +143,17 @@ same_phrase() { # <phrase> <phrase>
     [ -n "$1" ] && [ "$(normalize_phrase "$1")" = "$(normalize_phrase "$2")" ]
 }
 
+# The recovery phrase the daemon already holds, or nothing. It is the last line
+# of `warren warren mnemonic export`, printed by warren-app's mullvad-cli
+# `warren::mnemonic_export`: two warning lines, a blank one, then the phrase. A
+# line appended below it there would turn every restart with a state volume
+# into a false identity mismatch. Bounded like the other daemon calls on the
+# boot path; timeout(1) execs its argument, so it cannot run the warren_cli
+# shell function.
+stored_identity() {
+    timeout 10 /usr/bin/warren warren mnemonic export 2>/dev/null | tail -1
+}
+
 # Why the connect failed, from the status `timeout(1)` returned. 124 is the
 # one status that means the command was still running when the budget ran
 # out; everything else is the CLI refusing in its own time, and calling that a
@@ -549,7 +560,7 @@ if warren_cli account get 2>/dev/null | grep -q '^Address:'; then
         # a phrase rotated in the compose file would be ignored silently, on
         # someone else's subscription. The CLI cannot derive an address from a
         # phrase without adopting it, so the comparison is on the phrases.
-        STORED=$(warren_cli warren mnemonic export 2>/dev/null | tail -1)
+        STORED=$(stored_identity)
         if [ -z "$STORED" ]; then
             log "WARNING: could not read the stored identity; the state volume decides which identity runs, not WARREN_MNEMONIC[_FILE]"
         elif ! same_phrase "$STORED" "$MNEMONIC"; then
