@@ -35,11 +35,13 @@ check() { # check <description> <expected> <actual>
 
 check_fails() { # check_fails <description> <command...>
 	checks=$((checks + 1))
+	description="$1"
+	shift
 	if "$@" > /dev/null 2>&1; then
-		printf '  FAIL %s (it succeeded)\n' "$1"
+		printf '  FAIL %s (it succeeded)\n' "$description"
 		failures=$((failures + 1))
 	else
-		printf '  ok   %s\n' "$1"
+		printf '  ok   %s\n' "$description"
 	fi
 }
 
