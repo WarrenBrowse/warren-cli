@@ -58,11 +58,36 @@ check_true() { # check_true <description> <condition...>
 	fi
 }
 
+check_fails() { # check_fails <description> <command...>
+	checks=$((checks + 1))
+	description="$1"
+	shift
+	if "$@" > /dev/null 2>&1; then
+		printf '  FAIL %s (it succeeded)\n' "$description"
+		failures=$((failures + 1))
+	else
+		printf '  ok   %s\n' "$description"
+	fi
+}
+
 TMP="$(mktemp -d)"
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT INT TERM
 WARREN_HOOK_STATE_DIR="$TMP"
 export WARREN_HOOK_STATE_DIR
+
+echo "closed-set knobs"
+# A mistyped kill switch used to mean "off": the entrypoint compared against
+# the exact string "on" and took everything else as a request to disable it,
+# so `WARREN_LOCKDOWN=ON` egressed real traffic while the log claimed the
+# operator had asked for it. The CLI itself refuses "ON"; so must this.
+check_true "a documented value is accepted" require_one_of WARREN_LOCKDOWN on on off
+check_fails "a mistyped value is refused" require_one_of WARREN_LOCKDOWN ON on off
+check_fails "an empty value is refused" require_one_of WARREN_LOCKDOWN "" on off
+out="$(require_one_of WARREN_LOCKDOWN ON on off 2>&1 || true)"
+check_contains "the refusal names the knob and the value it was given" \
+	"WARREN_LOCKDOWN must be one of: on off (got 'ON')" "$out"
+check_true "a knob with its own vocabulary keeps it" require_one_of WARREN_LAN block allow block
 
 echo "which mapping line is ours"
 # The daemon prints one line per configured rule. Acting on any MAPPED line

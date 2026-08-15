@@ -86,6 +86,11 @@ Compose examples live in `docker/examples/`:
 | `WARREN_PORT_HOOK_TIMEOUT` | `30` | seconds a hook may run before it, and what it started, are killed (SIGTERM, then SIGKILL 5s later) |
 | `WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT` | `5` | same bound on the stop path; keep it well under the orchestrator's stop grace so the disconnect still runs |
 
+Every knob with a closed vocabulary (`on`/`off`, `allow`/`block`,
+`tcp`/`udp`/`both`) refuses a value it does not know and the container stops:
+`WARREN_LOCKDOWN=ON` is a typo, and reading it as `off` would run the whole
+container with the kill switch down while the log reported a value nobody set.
+
 ## Port forwarding
 
 Warren's port forwarding is NAT-PMP with entitlement credentials (5 ports per

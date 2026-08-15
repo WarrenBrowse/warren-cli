@@ -44,6 +44,21 @@ read_secret() {
 
 warren_cli() { /usr/bin/warren "$@"; }
 
+# A knob whose vocabulary is closed: anything else is an operator typo, and a
+# typo must stop the container rather than be translated into a working call
+# with a different meaning. `WARREN_LOCKDOWN=ON` used to read as "off" and
+# egress real traffic with the kill switch down; the CLI refuses "ON", so the
+# entrypoint must not turn it into a valid `lockdown-mode set off`.
+require_one_of() { # <name> <value> <allowed...>
+    ro_name="$1"; ro_value="$2"
+    shift 2
+    for ro_allowed in "$@"; do
+        [ "$ro_value" = "$ro_allowed" ] && return 0
+    done
+    log "ERROR: $ro_name must be one of: $* (got '$ro_value')"
+    return 1
+}
+
 # The port watcher runs in a background subshell, so the granted port is
 # shared through the status file, never through a shell variable.
 granted_port() {
@@ -154,6 +169,13 @@ MNEMONIC=$(read_secret WARREN_MNEMONIC_FILE WARREN_MNEMONIC)
 VOUCHER=$(read_secret WARREN_VOUCHER_FILE WARREN_VOUCHER)
 unset WARREN_MNEMONIC WARREN_VOUCHER
 
+ALLOW_INACTIVE="${WARREN_ALLOW_INACTIVE:-off}"
+require_one_of WARREN_ALLOW_INACTIVE "$ALLOW_INACTIVE" on off || exit 1
+require_one_of WARREN_PORT_FORWARD_MATCH_INTERNAL \
+    "${WARREN_PORT_FORWARD_MATCH_INTERNAL:-on}" on off || exit 1
+require_one_of WARREN_PORT_FORWARD_PROTOCOL \
+    "${WARREN_PORT_FORWARD_PROTOCOL:-both}" tcp udp both || exit 1
+
 command -v nft >/dev/null 2>&1 || fatal "nft missing from the image"
 [ -c /dev/net/tun ] || fatal "no /dev/net/tun: run with --device /dev/net/tun (and --cap-add NET_ADMIN)"
 
@@ -224,20 +246,24 @@ fi
 
 if warren_cli account get 2>/dev/null | grep -q '^Subscription: active'; then
     log "subscription active"
-elif [ "${WARREN_ALLOW_INACTIVE:-off}" = "on" ]; then
+elif [ "$ALLOW_INACTIVE" = "on" ]; then
     log "WARNING: subscription not active; continuing (WARREN_ALLOW_INACTIVE=on), traffic will not egress"
 else
     fatal "subscription not active: redeem a voucher (WARREN_VOUCHER) or set WARREN_ALLOW_INACTIVE=on"
 fi
 
 # ---- settings --------------------------------------------------------------
+require_one_of WARREN_LAN "${WARREN_LAN}" allow block || exit 1
 warren_cli lan set "${WARREN_LAN}" >/dev/null || fatal "lan set ${WARREN_LAN} failed"
 
+# The operator's own value goes to the CLI, so no typo can ever be read as a
+# request to disable the kill switch.
+require_one_of WARREN_LOCKDOWN "${WARREN_LOCKDOWN}" on off || exit 1
+warren_cli lockdown-mode set "${WARREN_LOCKDOWN}" >/dev/null \
+    || fatal "lockdown-mode set ${WARREN_LOCKDOWN} failed"
 if [ "${WARREN_LOCKDOWN}" = "on" ]; then
-    warren_cli lockdown-mode set on >/dev/null || fatal "enabling lockdown mode failed"
     log "kill switch on (lockdown mode)"
 else
-    warren_cli lockdown-mode set off >/dev/null || true
     log "WARNING: kill switch off (WARREN_LOCKDOWN=off)"
 fi
 
