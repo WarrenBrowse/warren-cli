@@ -105,6 +105,40 @@ check_contains "the refusal names the knob and the value it was given" \
 	"WARREN_LOCKDOWN must be one of: on off (got 'ON')" "$out"
 check_true "a knob with its own vocabulary keeps it" require_one_of WARREN_LAN block allow block
 
+# The wiring, not just the helper: only the kill switch was checked end to end,
+# so deleting the WARREN_ALLOW_INACTIVE, WARREN_PORT_FORWARD_MATCH_INTERNAL or
+# WARREN_PORT_FORWARD_PROTOCOL line turned nothing red. The supervision knobs
+# were read straight from the environment with no check at all, and a
+# non-numeric one makes `[ "$x" -ge "$y" ]` an error rather than a false: a
+# typo in WARREN_PORT_WATCHER_MAX_RESTARTS removed the give-up path instead of
+# moving it, and the watcher restarted forever.
+knobs_with() { # knobs_with <name> <value>
+	( export "$1=$2"; validate_knobs )
+}
+check_true "the defaults every container runs with are accepted" validate_knobs
+check_fails "a mistyped kill switch is refused before anything starts" \
+	knobs_with WARREN_LOCKDOWN ON
+check_fails "a mistyped LAN policy is refused" knobs_with WARREN_LAN Allow
+check_fails "a mistyped subscription override is refused" \
+	knobs_with WARREN_ALLOW_INACTIVE yes
+check_fails "a mistyped match-internal is refused" \
+	knobs_with WARREN_PORT_FORWARD_MATCH_INTERNAL true
+check_fails "a protocol the CLI does not know is refused" \
+	knobs_with WARREN_PORT_FORWARD_PROTOCOL sctp
+check_fails "a restart budget that is not a number is refused" \
+	knobs_with WARREN_PORT_WATCHER_MAX_RESTARTS many
+check_fails "a backoff that is not a number is refused" \
+	knobs_with WARREN_PORT_WATCHER_BACKOFF 2s
+check_fails "a healthy window that is not a number is refused" \
+	knobs_with WARREN_PORT_WATCHER_HEALTHY_SECS 1m
+check_fails "a hook budget that is not a number is refused" \
+	knobs_with WARREN_PORT_HOOK_TIMEOUT 30s
+check_fails "a shutdown hook budget that is not a number is refused" \
+	knobs_with WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT 5s
+out="$(knobs_with WARREN_PORT_WATCHER_MAX_RESTARTS many 2>&1 || true)"
+check_contains "and the numeric refusal names the knob and the value" \
+	"WARREN_PORT_WATCHER_MAX_RESTARTS must be a whole number (got 'many')" "$out"
+
 echo "connect failures"
 # `timeout N warren connect --wait` fails for two very different reasons, and
 # reporting both as "did not come up within 90s" sent an operator looking for

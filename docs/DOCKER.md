@@ -85,11 +85,19 @@ Compose examples live in `docker/examples/`:
 | `WARREN_PORT_FORWARD_STATUS_FILE` | `/tmp/warren/forwarded_port` | the granted public port, one decimal, rewritten on change |
 | `WARREN_PORT_HOOK_TIMEOUT` | `30` | seconds a hook may run before it, and what it started, are killed (SIGTERM, then SIGKILL 5s later) |
 | `WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT` | `5` | same bound on the stop path; keep it well under the orchestrator's stop grace so the disconnect still runs |
+| `WARREN_PORT_WATCHER_BACKOFF` | `2` | seconds before a stopped port watcher is restarted, doubling up to 60 |
+| `WARREN_PORT_WATCHER_HEALTHY_SECS` | `60` | a watcher run at least this long clears the restart budget |
+| `WARREN_PORT_WATCHER_MAX_RESTARTS` | `5` | quick watcher deaths in a row before the container stops |
 
 Every knob with a closed vocabulary (`on`/`off`, `allow`/`block`,
-`tcp`/`udp`/`both`) refuses a value it does not know and the container stops:
-`WARREN_LOCKDOWN=ON` is a typo, and reading it as `off` would run the whole
-container with the kill switch down while the log reported a value nobody set.
+`tcp`/`udp`/`both`) refuses a value it does not know, and every numeric knob
+refuses a value that is not a whole number; in both cases the container stops
+before the daemon starts. `WARREN_LOCKDOWN=ON` is a typo, and reading it as
+`off` would run the whole container with the kill switch down while the log
+reported a value nobody set. `WARREN_PORT_WATCHER_MAX_RESTARTS=many` is the
+same trap one layer down: the comparison that gives up on a watcher that will
+not stay up would error instead of being false, and the watcher would be
+restarted forever.
 
 ## Port forwarding
 

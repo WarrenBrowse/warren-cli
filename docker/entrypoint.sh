@@ -9,7 +9,8 @@
 #   WARREN_RELAY_LOCATION                    e.g. "fi" or "fi hel"
 #   WARREN_LOCKDOWN=on|off                   kill switch, default on
 #   WARREN_LAN=allow|block                   default allow (sidecars need it)
-#   WARREN_ALLOW_INACTIVE=on                 keep going without a subscription
+#   WARREN_ALLOW_INACTIVE=on|off             default off, keep going without
+#       a subscription
 #   WARREN_CONNECT_TIMEOUT                   seconds, default 90
 #   WARREN_PORT_FORWARD_INTERNAL_PORT        enables NAT-PMP forwarding
 #   WARREN_PORT_FORWARD_PROTOCOL             tcp|udp|both, default both
@@ -24,6 +25,12 @@
 #   WARREN_PORT_FORWARD_STATUS_FILE          default /tmp/warren/forwarded_port
 #   WARREN_PORT_HOOK_TIMEOUT                 seconds a hook may run, default 30
 #   WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT        same on the stop path, default 5
+#   WARREN_PORT_WATCHER_BACKOFF              seconds before the watcher is
+#       restarted, default 2, doubling up to 60
+#   WARREN_PORT_WATCHER_HEALTHY_SECS         a watcher run at least this long
+#       clears the restart budget, default 60
+#   WARREN_PORT_WATCHER_MAX_RESTARTS         quick deaths in a row before the
+#       container stops, default 5
 set -u
 
 # The image ENV carries these (docker/Dockerfile) and they are repeated here so
@@ -88,6 +95,41 @@ require_one_of() { # <name> <value> <allowed...>
     done
     log "ERROR: $ro_name must be one of: $* (got '$ro_value')"
     return 1
+}
+
+# A knob a comparison has to be able to make. `[ "$x" -ge 5 ]` on a value that
+# is not a number is an error, not a false, so an unchecked typo removed the
+# watcher's give-up path instead of moving it.
+require_number() { # <name> <value>
+    case "$2" in
+    '' | *[!0-9]*)
+        log "ERROR: $1 must be a whole number (got '$2')"
+        return 1
+        ;;
+    esac
+}
+
+# Every knob whose vocabulary is fixed, checked in one place so the wiring is
+# testable: the helpers above are unit-tested, but which knob is actually
+# passed through them is what an operator's typo depends on.
+validate_knobs() {
+    require_one_of WARREN_LAN "${WARREN_LAN}" allow block || return 1
+    require_one_of WARREN_LOCKDOWN "${WARREN_LOCKDOWN}" on off || return 1
+    require_one_of WARREN_ALLOW_INACTIVE "${WARREN_ALLOW_INACTIVE:-off}" on off || return 1
+    require_one_of WARREN_PORT_FORWARD_MATCH_INTERNAL \
+        "${WARREN_PORT_FORWARD_MATCH_INTERNAL:-on}" on off || return 1
+    require_one_of WARREN_PORT_FORWARD_PROTOCOL \
+        "${WARREN_PORT_FORWARD_PROTOCOL:-both}" tcp udp both || return 1
+    require_number WARREN_PORT_WATCHER_BACKOFF \
+        "${WARREN_PORT_WATCHER_BACKOFF:-2}" || return 1
+    require_number WARREN_PORT_WATCHER_HEALTHY_SECS \
+        "${WARREN_PORT_WATCHER_HEALTHY_SECS:-60}" || return 1
+    require_number WARREN_PORT_WATCHER_MAX_RESTARTS \
+        "${WARREN_PORT_WATCHER_MAX_RESTARTS:-5}" || return 1
+    require_number WARREN_PORT_HOOK_TIMEOUT \
+        "${WARREN_PORT_HOOK_TIMEOUT:-30}" || return 1
+    require_number WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT \
+        "${WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT:-5}" || return 1
 }
 
 # Whether two recovery phrases are the same identity. The daemon stores the
@@ -457,17 +499,11 @@ MNEMONIC=$(read_secret WARREN_MNEMONIC_FILE WARREN_MNEMONIC)
 VOUCHER=$(read_secret WARREN_VOUCHER_FILE WARREN_VOUCHER)
 strip_secrets_from_environment
 
-# Every closed-set knob is checked before anything is started: an operator
-# typo costs a second and a clear message, never a container that runs on for
-# hours with a setting nobody asked for.
+# Checked before anything is started: an operator typo costs a second and a
+# clear message, never a container that runs on for hours with a setting
+# nobody asked for.
+validate_knobs || exit 1
 ALLOW_INACTIVE="${WARREN_ALLOW_INACTIVE:-off}"
-require_one_of WARREN_LAN "${WARREN_LAN}" allow block || exit 1
-require_one_of WARREN_LOCKDOWN "${WARREN_LOCKDOWN}" on off || exit 1
-require_one_of WARREN_ALLOW_INACTIVE "$ALLOW_INACTIVE" on off || exit 1
-require_one_of WARREN_PORT_FORWARD_MATCH_INTERNAL \
-    "${WARREN_PORT_FORWARD_MATCH_INTERNAL:-on}" on off || exit 1
-require_one_of WARREN_PORT_FORWARD_PROTOCOL \
-    "${WARREN_PORT_FORWARD_PROTOCOL:-both}" tcp udp both || exit 1
 
 command -v nft >/dev/null 2>&1 || fatal "nft missing from the image"
 [ -c /dev/net/tun ] || fatal "no /dev/net/tun: run with --device /dev/net/tun (and --cap-add NET_ADMIN)"
