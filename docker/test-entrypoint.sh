@@ -191,8 +191,17 @@ if command -v setsid > /dev/null 2>&1; then
 		> "$TMP/orphan.log" 2>&1
 	sleep 5
 	check "what the hook started is killed with it" "" "$(cat "$TMP/orphan" 2>/dev/null || true)"
+	# The watchdog escalates SIGTERM to SIGKILL five seconds later, but it is
+	# reaped the instant the hook LEADER dies, so a descendant that ignores
+	# SIGTERM used to outlive the budget with nothing left to kill it.
+	run_port_hook "sh -c 'trap \"\" TERM; sleep 4; printf x >$TMP/residual' & wait" \
+		51413 up 1 > "$TMP/residual.log" 2>&1
+	sleep 6
+	check "a descendant that ignores SIGTERM does not outlive the budget" \
+		"" "$(cat "$TMP/residual" 2>/dev/null || true)"
 else
 	echo "  skip what the hook started is killed with it (no setsid on this host)"
+	echo "  skip a descendant that ignores SIGTERM does not outlive the budget"
 fi
 
 
@@ -291,6 +300,28 @@ check "and asks for a server-picked port instead of the pin that failed" \
 	"$(cat "$CALLS")"
 watch '60000/TCP+UDP: failed (suggested port in use)'
 check "a repeated failure for the same rule changes nothing more" "" "$(cat "$CALLS")$(cat "$TMP/order")"
+
+echo "the watcher stays up"
+# `port-forward status --watch` is a long-lived pipe. When it died the
+# container stayed healthy and simply stopped tracking grants: the status file
+# froze on a port the exit could reassign at any epoch, and nothing was logged.
+TICKS="$TMP/ticks"
+: > "$TICKS"
+port_watcher() {
+	printf 'tick\n' >> "$TICKS"
+	# The second run lives long enough to count as healthy, which must clear
+	# the restart budget: a container up for weeks is not a flapping watcher.
+	[ "$(wc -l < "$TICKS")" -eq 2 ] && sleep 1
+	return 0
+}
+port_watcher_fatal() { printf 'gave up after %s\n' "$1" >> "$TICKS"; }
+WARREN_PORT_WATCHER_BACKOFF=0 \
+	WARREN_PORT_WATCHER_HEALTHY_SECS=1 \
+	WARREN_PORT_WATCHER_MAX_RESTARTS=3 \
+	supervise_port_watcher > /dev/null 2>&1 || true
+check "a watcher that keeps dying is restarted, then given up on loudly" \
+	"tick tick tick tick gave up after 3" \
+	"$(tr '\n' ' ' < "$TICKS" | sed 's/ $//')"
 
 printf '\n%d checks, %d failure(s)\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]

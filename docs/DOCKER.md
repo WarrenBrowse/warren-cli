@@ -142,6 +142,11 @@ Three things the container guarantees around those hooks:
 - **The status line has to be ours.** The daemon prints one line per rule;
   only the line whose internal port is the one this container forwards drives
   the status file and the hooks.
+- **The watcher cannot die quietly.** It is restarted with a growing backoff
+  and each restart is logged. Five quick deaths in a row stop the container
+  (down command, disconnect, non-zero exit): a container that has lost port
+  tracking keeps an application pointed at a port the exit can reassign, and
+  nothing else in the stack would notice.
 
 The example's up-command talks to qBittorrent's Web API, which needs a
 session: it logs in first, with credentials from a `.env` file. Recent

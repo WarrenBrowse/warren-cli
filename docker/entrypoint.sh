@@ -39,6 +39,10 @@ set -u
 # variables, because the watcher runs in a background subshell.
 INTERNAL_FILE="${WARREN_PORT_FORWARD_STATUS_FILE}.internal"
 EXTERNAL_FILE="${WARREN_PORT_FORWARD_STATUS_FILE}.external"
+# The watcher runs in a background subshell, so this file is how it tells the
+# stop path that the container is going down on a failure, not on a request.
+WATCHER_FAILED_FILE="${WARREN_PORT_FORWARD_STATUS_FILE}.watcher_failed"
+MAIN_PID=$$
 
 log() { printf '%s [warren] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 fatal() { log "ERROR: $*"; exit 1; }
@@ -136,6 +140,10 @@ run_port_hook() {
     hook_watchdog=$!
     hook_rc=0
     wait "$hook_pid" 2>/dev/null || hook_rc=$?
+    # The leader is gone; a descendant that ignored SIGTERM is not, and the
+    # watchdog that would have escalated is about to be reaped. Only the group
+    # form: the leader's pid is free to be reused the moment it is reaped.
+    kill -KILL "-$hook_pid" 2>/dev/null || true
     kill "$hook_watchdog" 2>/dev/null || true
     wait "$hook_watchdog" 2>/dev/null || true
     if [ -f "$hook_marker" ]; then
@@ -291,6 +299,41 @@ port_watcher() {
     done
 }
 
+# What to do when the watcher will not stay up. A container that has lost
+# port tracking keeps telling an application to use a port the exit may have
+# reassigned, and nothing else would ever notice, so it goes down through the
+# normal stop path (down hook, disconnect) and reports a failure.
+port_watcher_fatal() { # <restarts>
+    log "ERROR: the port-forward watcher stopped $1 times and cannot stay up; stopping the container"
+    : > "$WATCHER_FAILED_FILE"
+    kill -TERM "$MAIN_PID" 2>/dev/null || true
+}
+
+supervise_port_watcher() {
+    spw_restarts=0
+    spw_backoff="${WARREN_PORT_WATCHER_BACKOFF:-2}"
+    while :; do
+        spw_started=$(date +%s)
+        port_watcher
+        # A watcher that ran for a while and then stopped is an incident, not a
+        # flap: only consecutive quick deaths exhaust the budget, so a
+        # container up for weeks is never killed by its own history.
+        if [ "$(($(date +%s) - spw_started))" -ge "${WARREN_PORT_WATCHER_HEALTHY_SECS:-60}" ]; then
+            spw_restarts=0
+            spw_backoff="${WARREN_PORT_WATCHER_BACKOFF:-2}"
+        fi
+        spw_restarts=$((spw_restarts + 1))
+        if [ "$spw_restarts" -ge "${WARREN_PORT_WATCHER_MAX_RESTARTS:-5}" ]; then
+            port_watcher_fatal "$spw_restarts"
+            return 1
+        fi
+        log "WARNING: the port-forward watcher stopped; restarting in ${spw_backoff}s"
+        sleep "$spw_backoff"
+        spw_backoff=$((spw_backoff * 2))
+        [ "$spw_backoff" -le 60 ] || spw_backoff=60
+    done
+}
+
 # Sourced by the unit tests, which want the functions and nothing else.
 if [ "${WARREN_ENTRYPOINT_LIB:-0}" = "1" ]; then
     return 0 2>/dev/null || exit 0
@@ -344,6 +387,12 @@ done
 shutdown() {
     trap '' TERM INT
     log "shutting down"
+    # The watcher first: a grant arriving now would run an up command beside
+    # the disconnect, and the down command below has to be the last word.
+    if [ -n "${WATCHER_PID:-}" ]; then
+        kill "$WATCHER_PID" 2>/dev/null || true
+        wait "$WATCHER_PID" 2>/dev/null || true
+    fi
     last_port=$(granted_port)
     if [ -n "$last_port" ]; then
         # Strictly under the container stop grace period: the disconnect below
@@ -351,9 +400,12 @@ shutdown() {
         run_port_hook "${WARREN_PORT_FORWARD_DOWN_COMMAND:-}" "$last_port" down \
             "${WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT:-5}"
     fi
-    warren_cli disconnect --wait >/dev/null 2>&1 || true
+    # Bounded like the hooks: a CLI that hangs here would burn what is left of
+    # the container's stop grace and get the whole thing SIGKILLed instead.
+    timeout 10 /usr/bin/warren disconnect --wait >/dev/null 2>&1 || true
     kill "$DAEMON_PID" 2>/dev/null || true
     wait "$DAEMON_PID" 2>/dev/null || true
+    [ -f "$WATCHER_FAILED_FILE" ] && exit 1
     exit 0
 }
 trap shutdown TERM INT
@@ -452,7 +504,8 @@ if [ -n "${WARREN_PORT_FORWARD_INTERNAL_PORT:-}" ]; then
     printf '%s\n' "$WARREN_PORT_FORWARD_INTERNAL_PORT" >"$INTERNAL_FILE"
     printf '%s\n' "${WARREN_PORT_FORWARD_EXTERNAL_PORT:-0}" >"$EXTERNAL_FILE"
 
-    port_watcher &
+    supervise_port_watcher &
+    WATCHER_PID=$!
 fi
 
 log "up and supervising"
