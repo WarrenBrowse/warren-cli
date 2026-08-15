@@ -13,6 +13,8 @@
 # One run publishes exactly one channel (shared release-channel contract):
 #   daemon-v*       -> ghcr.io/warrenbrowse/warren-vpn:<ver>       + :latest
 #   daemon-beta-v*  -> ghcr.io/warrenbrowse/warren-vpn:beta-<ver>  + :beta
+# A push to main writes the rolling tag only: it rebuilds the same daemon
+# release, so a version tag would name several different images.
 #
 # Platforms are discovered from the release assets: amd64 always, arm64 as
 # soon as the release carries an arm64 .deb. Asset and tag names come from
@@ -105,9 +107,21 @@ jobs:
           fi
 
           if [ "$channel" = "beta" ]; then
-            tags="ghcr.io/warrenbrowse/warren-vpn:beta-${version},ghcr.io/warrenbrowse/warren-vpn:beta"
+            pinned="ghcr.io/warrenbrowse/warren-vpn:beta-${version}"
+            rolling="ghcr.io/warrenbrowse/warren-vpn:beta"
           else
-            tags="ghcr.io/warrenbrowse/warren-vpn:${version},ghcr.io/warrenbrowse/warren-vpn:latest"
+            pinned="ghcr.io/warrenbrowse/warren-vpn:${version}"
+            rolling="ghcr.io/warrenbrowse/warren-vpn:latest"
+          fi
+          # A push carries no release identity: the image is this repo's
+          # docker/ tree plus the SAME released daemon, so writing the version
+          # tag again would give :beta-1.1.15 a second digest, and a compose
+          # file pinned on it a moving target. The rolling tag is what tracks
+          # main; the version tag is written by a release or a dispatch.
+          if [ "$EVENT" = "push" ]; then
+            tags="$rolling"
+          else
+            tags="${pinned},${rolling}"
           fi
 
           {

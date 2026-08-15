@@ -22,6 +22,13 @@ one channel, and the two series never overwrite each other.
 | beta (the live network today) | `daemon-beta-v*` | `:beta-<ver>`, rolling `:beta` |
 | prod (opens with production) | `daemon-v*` | `:<ver>`, rolling `:latest` |
 
+A version tag names one image and keeps naming it: it is written by a daemon
+release, or by a manual dispatch pinning that version. The rolling tag is the
+one that tracks this repository: a `docker/` change landing on `main` rebuilds
+the image around the same released daemon and republishes `:beta` alone, since
+giving `:beta-1.1.15` a second digest would turn a pinned deployment into a
+moving target.
+
 Use `:beta` until production opens; the examples do. The container itself is
 channel-neutral glue: the channel is baked into the daemon binaries the image
 repackages (API host, state paths, firewall id), never into the entrypoint.
@@ -285,4 +292,10 @@ and stopping there used to leave the registry on the old entrypoint.
 
 `docker/test-image.sh` runs the offline smoke tests against a built image;
 with `WARREN_TEST_MNEMONIC_FILE` pointing at a subscribed phrase it also runs
-the live end-to-end checks (connect, egress, kill switch, port forward).
+the live end-to-end checks: connect, egress compared against the untunnelled
+IP, kill switch, port forward, inbound reachability of the granted port from
+outside, and a clean shutdown. The inbound leg fetches a listener joined to the
+tunnel namespace through the exit's public address, so the machine running the
+live tests must be able to reach an arbitrary high port on the public internet;
+behind a restrictive egress filter that check fails for a reason that is not
+the image's.
