@@ -7,7 +7,14 @@
 #
 # Offline tests assert the entrypoint's own refusal paths, so they need no
 # account, no network and no privileges. The live test needs a subscribed
-# recovery phrase and really connects to the Warren network.
+# recovery phrase and really connects to the Warren network. It also proves
+# inbound reachability, by fetching a listener inside the tunnel namespace
+# through the exit's public address, so the machine running it must be able to
+# reach an arbitrary high port on the internet.
+#
+# WARREN_TEST_EXTRA_ENV adds container env to the live run, e.g.
+# WARREN_TEST_EXTRA_ENV='-e WARREN_RELAY_LOCATION=de'.
+# WARREN_TEST_PLATFORM runs every container of the run on one platform.
 set -u
 
 IMAGE=${1:-warren-vpn:test}
@@ -53,8 +60,25 @@ fi
 [ -r "$WARREN_TEST_MNEMONIC_FILE" ] || { fail "WARREN_TEST_MNEMONIC_FILE unreadable"; exit 1; }
 
 NAME="warren-test-$$"
-cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
+LISTENER="$NAME-listener"
+MARKER=warren-port-forward-ok
+MARKER_LEN=22
+cleanup() {
+    docker rm -f "$LISTENER" >/dev/null 2>&1 || true
+    docker rm -f "$NAME" >/dev/null 2>&1 || true
+}
 trap cleanup EXIT INT TERM
+
+# The egress assertion below is a comparison, so the answer without a tunnel
+# has to be known first: any non-empty IP used to pass, including this host's
+# own, which is exactly what a bypassed tunnel would return.
+say "live: this host's egress IP, for comparison"
+host_ip=$(drun curlimages/curl -fsS --max-time 20 https://icanhazip.com 2>/dev/null | tr -d '[:space:]')
+if [ -n "$host_ip" ]; then
+    pass "untunnelled egress is $host_ip"
+else
+    fail "could not measure the untunnelled egress IP"; exit 1
+fi
 
 say "live: bring the tunnel up (this dials the real Warren network)"
 # shellcheck disable=SC2086
@@ -82,10 +106,12 @@ pass "container healthy (tunnel Connected)"
 
 say "live: egress rides the tunnel"
 tunnel_ip=$(docker exec "$NAME" curl -fsS --max-time 20 https://icanhazip.com 2>/dev/null | tr -d '[:space:]')
-if [ -n "$tunnel_ip" ]; then
-    pass "egress OK via $tunnel_ip"
-else
+if [ -z "$tunnel_ip" ]; then
     fail "no egress through the tunnel"
+elif [ "$tunnel_ip" = "$host_ip" ]; then
+    fail "egress did not ride the tunnel: the container answers with this host's own IP ($tunnel_ip)"
+else
+    pass "egress OK via $tunnel_ip (this host is $host_ip)"
 fi
 
 say "live: kill switch blocks when disconnected"
@@ -116,6 +142,44 @@ if [ -n "$up_marker" ]; then
 else
     fail "up-command did not run"
 fi
+
+say "live: the granted port answers from the public internet"
+# The container's headline feature is an inbound port, and nothing here ever
+# sent a packet to it: a mapping reported MAPPED has been observed dead after
+# a reconnect. A listener joined to the tunnel namespace, fetched from outside
+# through the exit's public address, is the only proof.
+#
+# The port is re-read on every attempt: the re-point converges over a cycle or
+# two, and the exit can grant a different port meanwhile.
+probe_port=""
+inbound=""
+i=0
+while [ "$i" -le 12 ]; do
+    current=$(docker exec "$NAME" cat /tmp/warren/forwarded_port 2>/dev/null | tr -d '[:space:]')
+    case "$current" in
+    '' | *[!0-9]*) current="" ;;
+    esac
+    if [ -n "$current" ] && [ "$current" != "$probe_port" ]; then
+        probe_port="$current"
+        docker rm -f "$LISTENER" >/dev/null 2>&1 || true
+        # shellcheck disable=SC2086
+        docker run -d --rm --name "$LISTENER" $PLATFORM_ARGS --network "container:$NAME" busybox \
+            sh -c "while true; do printf 'HTTP/1.1 200 OK\r\nContent-Length: $MARKER_LEN\r\n\r\n$MARKER' | nc -l -p $probe_port; done" \
+            >/dev/null 2>&1 || fail "could not start the listener in the tunnel namespace"
+        sleep 3
+    fi
+    if [ -n "$probe_port" ]; then
+        inbound=$(drun curlimages/curl -fsS --max-time 8 "http://$tunnel_ip:$probe_port/" 2>/dev/null | tr -d '[:space:]')
+        [ "$inbound" = "$MARKER" ] && break
+    fi
+    i=$((i + 1)); sleep 5
+done
+if [ "$inbound" = "$MARKER" ]; then
+    pass "inbound reached the container on $tunnel_ip:$probe_port"
+else
+    fail "nothing reached the forwarded port from outside ($tunnel_ip:${probe_port:-none})"
+fi
+docker rm -f "$LISTENER" >/dev/null 2>&1 || true
 
 say "live: clean shutdown on docker stop"
 if docker stop -t 30 "$NAME" >/dev/null && [ "$(docker inspect -f '{{.State.ExitCode}}' "$NAME")" = "0" ]; then
