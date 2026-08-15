@@ -33,7 +33,7 @@ answers `unauthorized`. Build it locally under that exact name (see
 unchanged:
 
 ```bash
-docker build -f docker/Dockerfile -t ghcr.io/warrenbrowse/warren-vpn:beta .
+./docker/build.sh -t ghcr.io/warrenbrowse/warren-vpn:beta
 ```
 
 This section will switch to the direct pull once the package is public.
@@ -83,6 +83,8 @@ Compose examples live in `docker/examples/`:
 | `WARREN_PORT_FORWARD_UP_COMMAND` | | run (via `sh -c`, inside this container) each time a public port is granted, `{{PORT}}` substituted |
 | `WARREN_PORT_FORWARD_DOWN_COMMAND` | | run when the port is released or replaced, `{{PORT}}` substituted |
 | `WARREN_PORT_FORWARD_STATUS_FILE` | `/tmp/warren/forwarded_port` | the granted public port, one decimal, rewritten on change |
+| `WARREN_PORT_HOOK_TIMEOUT` | `30` | seconds a hook may run before it is killed (SIGTERM, then SIGKILL 5s later) |
+| `WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT` | `5` | same bound on the stop path; keep it well under the orchestrator's stop grace so the disconnect still runs |
 
 ## Port forwarding
 
@@ -110,6 +112,30 @@ subscription fleet-wide, public range 49152-65535). In this image:
 The granted port can change when the mapping is re-established; the watcher
 re-runs the down/up commands and rewrites the status file each time.
 
+Three things the container guarantees around those hooks:
+
+- **One rule per container.** The daemon persists its forward rules, and
+  `enable` upserts rather than replaces, so a rule re-pointed by a previous
+  run would come back next to the configured one. The entrypoint clears the
+  rule list before enabling, so the container always holds exactly one of the
+  five fleet-wide entitlement slots and the watcher never sees two different
+  granted ports competing.
+- **A hook cannot hang the container.** Hooks run under
+  `WARREN_PORT_HOOK_TIMEOUT` (30s) and are killed past it. Without that bound
+  a hook that never returns stops the watcher from consuming status updates,
+  so every later grant is ignored while the status file keeps announcing a
+  port the exit no longer maps.
+- **The status line has to be ours.** The daemon prints one line per rule;
+  only the line whose internal port is the one this container forwards drives
+  the status file and the hooks.
+
+The example's up-command talks to qBittorrent's Web API, which needs a
+session: it logs in first, with credentials from a `.env` file. Recent
+qBittorrent authenticates localhost too, and the linuxserver image sets a
+random temporary WebUI password on first start, so an unauthenticated POST
+gets a 403 and the only symptom is one `WARNING: port-forward up command
+failed` line under a container that stays healthy.
+
 ## Health
 
 The Docker `HEALTHCHECK` (and the Kubernetes probes in the example) run
@@ -123,7 +149,37 @@ depends_on:
 
 `WARREN_HEALTH_TARGET=https://example.org` adds a real egress probe. It is
 off by default: a periodic fetch to a fixed host is a fingerprint, opt into
-it deliberately.
+it deliberately. It also makes the health check slower (`curl --max-time 10`
+on top of the daemon query), so raise the probe timeouts if you enable it:
+the Docker `HEALTHCHECK` already allows 15s, while the Kubernetes default
+`timeoutSeconds` is 1 and the example manifest raises it explicitly.
+
+## Sharing the namespace: two ordering traps
+
+**Restarting warren replaces the network namespace.** Docker gives the
+restarted container a new one, and every service that joined the old one keeps
+a handle on a destroyed namespace: no connectivity, no error, indefinitely.
+The warren container does exit when the tunnel cannot be established, so this
+is a normal event, not an edge case. `depends_on` orders the start and does
+not follow a restart, so after any warren restart the joined services must be
+restarted too:
+
+```bash
+docker compose restart qbittorrent
+```
+
+**In Kubernetes, ordinary pod containers start concurrently.** A warren listed
+under `containers` therefore races the workload, which egresses with the
+node's real IP for the whole bring-up (daemon boot, login, subscription check,
+connect), before any firewall rule exists in the pod netns. The example
+manifest declares warren as a **native sidecar** (an `initContainer` with
+`restartPolicy: Always`, Kubernetes 1.29 or newer): the kubelet starts it
+first, holds the workload containers until its `startupProbe` passes, and
+restarts it in place. On an older cluster there is no equivalent primitive:
+either the workload blocks on its own gate (an init container running
+`/usr/local/bin/warren-healthcheck`) or it carries that leak window on every
+pod start, rollout and reschedule. A `startupProbe` on the warren container
+gates nothing but that container.
 
 ## State, secrets, caveats
 
@@ -150,17 +206,31 @@ it deliberately.
 ## Building locally
 
 ```bash
-# from the repo root, latest release of the live (beta) channel:
-docker build -f docker/Dockerfile -t warren-vpn .
+# latest release of the live (beta) channel:
+./docker/build.sh -t warren-vpn
 # pin a channel and version:
-docker build -f docker/Dockerfile \
-  --build-arg WARREN_CHANNEL=prod --build-arg WARREN_DAEMON_VERSION=1.2.1 \
-  -t warren-vpn .
+./docker/build.sh --channel prod --version 1.2.1 -t warren-vpn
 # from a locally built .deb (see docs/INSTALL-SERVER.md, Option B):
 cp warren-vpn-daemon*_*.deb docker/local-debs/
-docker build -f docker/Dockerfile --build-arg LOCAL_DEB=1 -t warren-vpn .
+./docker/build.sh --local-deb -t warren-vpn
 ```
 
-`docker/test-image.sh` runs the offline smoke tests (no account needed);
+`docker/build.sh` resolves the release version and passes it to the build as
+`--build-arg WARREN_DAEMON_VERSION`, because that is what puts the daemon
+version in Docker's cache key. Resolving "the latest release" from inside the
+Dockerfile would not: the same `docker build` command, run again after a
+daemon release, would reuse the cached layer and reship the daemon downloaded
+weeks earlier, with nothing in the output to tell the two runs apart. The
+Dockerfile therefore refuses a build that pins no version.
+
+Tests, none of which needs an account or a network:
+
+```bash
+sh docker/test-entrypoint.sh   # the entrypoint's helpers
+sh docker/test-build.sh        # version resolution and build arguments
+sh docker/test-examples.sh     # the example manifests (needs ruby)
+```
+
+`docker/test-image.sh` runs the offline smoke tests against a built image;
 with `WARREN_TEST_MNEMONIC_FILE` pointing at a subscribed phrase it also runs
 the live end-to-end checks (connect, egress, kill switch, port forward).

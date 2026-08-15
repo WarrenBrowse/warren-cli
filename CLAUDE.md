@@ -33,8 +33,11 @@ URLs answer 404 and the API does not list it).
 - Never add or fork client source code here. Route CLI/daemon/packaging/release
   changes per the where-to-edit table in `CONTRIBUTING.md`; this repo owns only
   `scripts/`, `linux/`, `macos/`, `windows/`, `docker/` and `docs/`.
-- Local check before commit: `git ls-files -z '*.sh' | xargs -0 shellcheck -S warning`
-  and `sh scripts/test-install.sh`. CI (`.github/workflows/ci.yml`) runs both
+- Local check before commit: `git ls-files -z '*.sh' | xargs -0 shellcheck -S warning`,
+  `sh scripts/test-install.sh`, and, for anything under `docker/`,
+  `sh docker/test-entrypoint.sh`, `sh docker/test-build.sh` and
+  `sh docker/test-examples.sh` (none needs an account, a network or docker).
+  CI (`.github/workflows/ci.yml`) runs all of them
   plus PSScriptAnalyzer on `windows/`, and builds nothing;
   `.github/workflows/docker.yml` builds and publishes the container image from
   the released .deb (docs/DOCKER.md).
