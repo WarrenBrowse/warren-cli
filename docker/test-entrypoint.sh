@@ -246,12 +246,10 @@ echo "the port watcher"
 # test can record the calls and replay a status stream in their place.
 CALLS="$TMP/cli-calls"
 FEED=""
-warren_cli() {
-	case "$*" in
-	"port-forward status --watch") printf '%s' "$FEED" ;;
-	*) printf '%s\n' "$*" >> "$CALLS" ;;
-	esac
-}
+# The status stream is a system boundary (a long-lived CLI process), so it is
+# the one thing replaced here; every other CLI call is recorded as it is made.
+port_forward_stream() { printf '%s' "$FEED"; }
+warren_cli() { printf '%s\n' "$*" >> "$CALLS"; }
 # Both hooks append to one file, so their ordering is an assertion.
 WARREN_PORT_FORWARD_UP_COMMAND="echo up:{{PORT}} >>$TMP/order"
 WARREN_PORT_FORWARD_DOWN_COMMAND="echo down:{{PORT}} >>$TMP/order"
@@ -294,7 +292,6 @@ check "and the new port lands in the status file" "60000" "$(cat "$WARREN_PORT_F
 # status file that flip-flops between two grants.
 warren_cli() {
 	case "$*" in
-	"port-forward status --watch") printf '%s' "$FEED" ;;
 	"port-forward remove"*) printf '%s\n' "$*" >> "$CALLS"; return 1 ;;
 	*) printf '%s\n' "$*" >> "$CALLS" ;;
 	esac
@@ -316,12 +313,7 @@ check_fails "another rule failing is not ours" \
 check_fails "a live mapping is not a lost one" \
 	mapping_lost '6881/TCP+UDP: MAPPED, public port 51413' 6881
 
-warren_cli() {
-	case "$*" in
-	"port-forward status --watch") printf '%s' "$FEED" ;;
-	*) printf '%s\n' "$*" >> "$CALLS" ;;
-	esac
-}
+warren_cli() { printf '%s\n' "$*" >> "$CALLS"; }
 printf '60000\n' > "$INTERNAL_FILE"
 printf '60000\n' > "$EXTERNAL_FILE"
 printf '60000\n' > "$WARREN_PORT_FORWARD_STATUS_FILE"
@@ -335,6 +327,50 @@ check "and asks for a server-picked port instead of the pin that failed" \
 	"$(cat "$CALLS")"
 watch '60000/TCP+UDP: failed (suggested port in use)'
 check "a repeated failure for the same rule changes nothing more" "" "$(cat "$CALLS")$(cat "$TMP/order")"
+
+echo "the watcher stops for good"
+# `kill $WATCHER_PID` reached the supervisor only. The status stream and the
+# read loop were the two halves of a pipeline, each a process of its own, and a
+# background job shares the shell's process group so there was no group to
+# signal instead: a grant arriving during the stop ran an up command after the
+# down command and rewrote the status file the container was leaving behind.
+STREAM="$TMP/stream-in"
+rm -f "$STREAM"
+mkfifo "$STREAM"
+port_forward_stream() { exec cat "$STREAM"; }
+warren_cli() { printf '%s\n' "$*" >> "$CALLS"; }
+WARREN_PORT_FORWARD_MATCH_INTERNAL=off
+export WARREN_PORT_FORWARD_MATCH_INTERNAL
+printf '6881\n' > "$INTERNAL_FILE"
+printf '0\n' > "$EXTERNAL_FILE"
+rm -f "$WARREN_PORT_FORWARD_STATUS_FILE" "$WATCHER_STOPPING_FILE"
+: > "$CALLS"
+: > "$TMP/order"
+supervise_port_watcher > /dev/null 2>&1 &
+WATCHER_PID=$!
+# Read-write: this never blocks waiting for the watcher to open the fifo, and
+# never takes a SIGPIPE once the stream on the other end is killed.
+exec 9<> "$STREAM"
+printf '6881/TCP+UDP: MAPPED, public port 51413\n' >&9
+i=0
+while [ ! -s "$WARREN_PORT_FORWARD_STATUS_FILE" ] && [ "$i" -lt 20 ]; do
+	sleep 1
+	i=$((i + 1))
+done
+check "a running watcher acts on a grant" "up:51413" "$(cat "$TMP/order")"
+
+stop_port_watcher
+: > "$TMP/order"
+: > "$CALLS"
+printf '6881/TCP+UDP: MAPPED, public port 60000\n' >&9
+sleep 2
+check "a grant arriving during the stop runs no hook" "" "$(cat "$TMP/order")"
+check "and does not rewrite the status file the container is leaving behind" \
+	"51413" "$(cat "$WARREN_PORT_FORWARD_STATUS_FILE")"
+check "and asks the CLI for nothing more" "" "$(cat "$CALLS")"
+exec 9>&-
+rm -f "$WATCHER_STOPPING_FILE"
+WATCHER_PID=""
 
 echo "the watcher stays up"
 # `port-forward status --watch` is a long-lived pipe. When it died the
@@ -359,6 +395,46 @@ WARREN_PORT_WATCHER_BACKOFF=0 \
 check "a watcher that keeps dying is restarted, then given up on loudly" \
 	"tick tick tick tick gave up after 3" \
 	"$(tr '\n' ' ' < "$TICKS" | sed 's/ $//')"
+
+echo "the stop path"
+# What the stop path guarantees: the down command runs for the port the
+# container is giving up, the disconnect that tears the tunnel down runs after
+# it and under a hard bound, and a container stopped by its own watcher exits
+# non-zero. `timeout` is resolved through PATH, so a stub records the bound and
+# the command instead of running the CLI.
+STUB_BIN="$TMP/bin"
+mkdir -p "$STUB_BIN"
+cat > "$STUB_BIN/timeout" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" > "$TMP/disconnect"
+printf 'disconnect\n' >> "$TMP/order"
+EOF
+chmod +x "$STUB_BIN/timeout"
+PATH="$STUB_BIN:$PATH"
+
+: > "$TMP/order"
+: > "$TMP/disconnect"
+rm -f "$WATCHER_FAILED_FILE" "$WATCHER_STOPPING_FILE"
+printf '51413\n' > "$WARREN_PORT_FORWARD_STATUS_FILE"
+# Both are read by shutdown() and stop_port_watcher(), in the sourced entrypoint.
+# shellcheck disable=SC2034
+WATCHER_PID=""
+# shellcheck disable=SC2034
+DAEMON_PID=""
+rc=0
+( shutdown ) > /dev/null 2>&1 || rc=$?
+check "the down command runs for the port being given up, then the disconnect" \
+	"down:51413
+disconnect" "$(cat "$TMP/order")"
+check "and the disconnect is bounded" \
+	"10 /usr/bin/warren disconnect --wait" "$(cat "$TMP/disconnect")"
+check "a requested stop exits zero" "0" "$rc"
+
+: > "$WATCHER_FAILED_FILE"
+rc=0
+( shutdown ) > /dev/null 2>&1 || rc=$?
+check "a stop the watcher forced exits non-zero" "1" "$rc"
+rm -f "$WATCHER_FAILED_FILE" "$WATCHER_STOPPING_FILE"
 
 printf '\n%d checks, %d failure(s)\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]

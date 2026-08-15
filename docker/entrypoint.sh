@@ -42,6 +42,12 @@ EXTERNAL_FILE="${WARREN_PORT_FORWARD_STATUS_FILE}.external"
 # The watcher runs in a background subshell, so this file is how it tells the
 # stop path that the container is going down on a failure, not on a request.
 WATCHER_FAILED_FILE="${WARREN_PORT_FORWARD_STATUS_FILE}.watcher_failed"
+# The watcher reads its status lines out of this fifo, and records the pid of
+# the process filling it. Both exist so the stop path can reach the whole
+# watcher: see stop_port_watcher.
+WATCHER_FIFO="${WARREN_PORT_FORWARD_STATUS_FILE}.stream"
+WATCHER_STREAM_FILE="${WARREN_PORT_FORWARD_STATUS_FILE}.stream_pid"
+WATCHER_STOPPING_FILE="${WARREN_PORT_FORWARD_STATUS_FILE}.stopping"
 MAIN_PID=$$
 
 log() { printf '%s [warren] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
@@ -296,8 +302,30 @@ forward_lost() {
         || log "WARNING: could not re-request a public port"
 }
 
+# The status stream, as a process whose pid the stop path can use. `exec` is
+# what makes that pid the CLI's own: a shell function put in the background
+# leaves a wrapper shell holding the pid that $! reports, and killing the
+# wrapper leaves the CLI running with the pipe still open.
+port_forward_stream() { exec /usr/bin/warren port-forward status --watch 2>/dev/null; }
+
 port_watcher() {
-    warren_cli port-forward status --watch 2>/dev/null | while IFS= read -r line; do
+    rm -f "$WATCHER_FIFO"
+    mkfifo "$WATCHER_FIFO" || { log "ERROR: cannot create the port-forward status fifo"; return 1; }
+    # A fifo rather than a pipeline, so that the stop path can reach every
+    # part of the watcher: the read loop below runs in the watcher subshell
+    # itself (which `kill $WATCHER_PID` really does stop) and the stream is a
+    # single child whose pid is recorded. A pipeline puts the loop in a third
+    # process that nothing can name, and a background job shares the shell's
+    # process group, so there is no group to signal instead.
+    port_forward_stream > "$WATCHER_FIFO" &
+    pw_stream=$!
+    printf '%s\n' "$pw_stream" > "$WATCHER_STREAM_FILE"
+    while IFS= read -r line; do
+        # The stop path runs the down command and disconnects; anything done
+        # from here now would land after it.
+        if [ -e "$WATCHER_STOPPING_FILE" ]; then
+            break
+        fi
         port=$(mapping_public_port "$line" "$(cat "$INTERNAL_FILE")")
         if [ -n "$port" ]; then
             previous=$(granted_port)
@@ -319,7 +347,10 @@ port_watcher() {
                 forward_lost
             fi
         fi
-    done
+    done < "$WATCHER_FIFO"
+    kill "$pw_stream" 2>/dev/null || true
+    wait "$pw_stream" 2>/dev/null || true
+    rm -f "$WATCHER_FIFO"
 }
 
 # What to do when the watcher will not stay up. A container that has lost
@@ -338,6 +369,12 @@ supervise_port_watcher() {
     while :; do
         spw_started=$(date +%s)
         port_watcher
+        # A stop is not a death: restarting here would run a new stream beside
+        # the disconnect, and five stops in a row would exhaust the budget and
+        # report a clean shutdown as a watcher failure.
+        if [ -e "$WATCHER_STOPPING_FILE" ]; then
+            return 0
+        fi
         # A watcher that ran for a while and then stopped is an incident, not a
         # flap: only consecutive quick deaths exhaust the budget, so a
         # container up for weeks is never killed by its own history.
@@ -355,6 +392,56 @@ supervise_port_watcher() {
         spw_backoff=$((spw_backoff * 2))
         [ "$spw_backoff" -le 60 ] || spw_backoff=60
     done
+}
+
+# Stop the watcher for good. It is two processes, not one: the subshell named
+# by $WATCHER_PID runs the read loop, and the status stream it reads is a
+# separate child whose pid it records. Killing only the subshell used to leave
+# the stream and, while the loop was the right-hand side of a pipeline, the
+# loop itself running: a grant arriving during the stop then ran an up command
+# after the down command and rewrote the status file on the way out. The flag
+# goes first, because a line already in flight is read before either kill
+# lands.
+stop_port_watcher() {
+    : > "$WATCHER_STOPPING_FILE"
+    spw_stream=$(cat "$WATCHER_STREAM_FILE" 2>/dev/null || true)
+    case "$spw_stream" in
+    '' | *[!0-9]*) ;;
+    *) kill "$spw_stream" 2>/dev/null || true ;;
+    esac
+    if [ -n "${WATCHER_PID:-}" ]; then
+        kill "$WATCHER_PID" 2>/dev/null || true
+        wait "$WATCHER_PID" 2>/dev/null || true
+    fi
+}
+
+# Bounded like the hooks: a CLI that hangs here would burn what is left of the
+# container's stop grace and get the whole thing SIGKILLed instead. timeout(1)
+# execs its argument, so it cannot run the warren_cli shell function.
+disconnect_bounded() {
+    timeout 10 /usr/bin/warren disconnect --wait >/dev/null 2>&1 || true
+}
+
+shutdown() {
+    trap '' TERM INT
+    log "shutting down"
+    # The watcher first: a grant arriving now would run an up command beside
+    # the disconnect, and the down command below has to be the last word.
+    stop_port_watcher
+    last_port=$(granted_port)
+    if [ -n "$last_port" ]; then
+        # Strictly under the container stop grace period: the disconnect below
+        # is what tears the tunnel down cleanly, and it must still get to run.
+        run_port_hook "${WARREN_PORT_FORWARD_DOWN_COMMAND:-}" "$last_port" down \
+            "${WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT:-5}"
+    fi
+    disconnect_bounded
+    kill "${DAEMON_PID:-}" 2>/dev/null || true
+    wait "${DAEMON_PID:-}" 2>/dev/null || true
+    if [ -f "$WATCHER_FAILED_FILE" ]; then
+        exit 1
+    fi
+    exit 0
 }
 
 # Sourced by the unit tests, which want the functions and nothing else.
@@ -412,30 +499,6 @@ until warren_cli status >/dev/null 2>&1; do
 done
 
 # ---- shutdown path ---------------------------------------------------------
-shutdown() {
-    trap '' TERM INT
-    log "shutting down"
-    # The watcher first: a grant arriving now would run an up command beside
-    # the disconnect, and the down command below has to be the last word.
-    if [ -n "${WATCHER_PID:-}" ]; then
-        kill "$WATCHER_PID" 2>/dev/null || true
-        wait "$WATCHER_PID" 2>/dev/null || true
-    fi
-    last_port=$(granted_port)
-    if [ -n "$last_port" ]; then
-        # Strictly under the container stop grace period: the disconnect below
-        # is what tears the tunnel down cleanly, and it must still get to run.
-        run_port_hook "${WARREN_PORT_FORWARD_DOWN_COMMAND:-}" "$last_port" down \
-            "${WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT:-5}"
-    fi
-    # Bounded like the hooks: a CLI that hangs here would burn what is left of
-    # the container's stop grace and get the whole thing SIGKILLed instead.
-    timeout 10 /usr/bin/warren disconnect --wait >/dev/null 2>&1 || true
-    kill "$DAEMON_PID" 2>/dev/null || true
-    wait "$DAEMON_PID" 2>/dev/null || true
-    [ -f "$WATCHER_FAILED_FILE" ] && exit 1
-    exit 0
-}
 trap shutdown TERM INT
 
 # ---- account ---------------------------------------------------------------
@@ -546,6 +609,9 @@ if [ -n "${WARREN_PORT_FORWARD_INTERNAL_PORT:-}" ]; then
     printf '%s\n' "$WARREN_PORT_FORWARD_INTERNAL_PORT" >"$INTERNAL_FILE"
     printf '%s\n' "${WARREN_PORT_FORWARD_EXTERNAL_PORT:-0}" >"$EXTERNAL_FILE"
 
+    # A status directory can be a mounted volume, and a stop flag left there by
+    # the previous run would stop this watcher before its first line.
+    rm -f "$WATCHER_STOPPING_FILE" "$WATCHER_STREAM_FILE"
     supervise_port_watcher &
     WATCHER_PID=$!
 fi
