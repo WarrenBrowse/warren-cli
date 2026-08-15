@@ -55,7 +55,9 @@ granted_port() {
 # grant is ever seen) and, on the stop path, burn the whole container grace
 # period before the disconnect runs. The bound is a shell watchdog rather
 # than timeout(1) so the same code is exercised by the unit tests on any
-# POSIX host; SIGTERM first, SIGKILL five seconds later.
+# POSIX host; SIGTERM first, SIGKILL five seconds later. Like timeout(1), it
+# signals the command it started, not that command's own descendants: what
+# is guaranteed is that the watcher (or the stop path) gets control back.
 run_port_hook() {
     hook_cmd="$1"; hook_port="$2"; hook_name="$3"
     hook_budget="${4:-${WARREN_PORT_HOOK_TIMEOUT:-30}}"
@@ -64,8 +66,19 @@ run_port_hook() {
     hook_marker="${WARREN_HOOK_STATE_DIR:-/tmp}/warren-hook-$hook_name-$$.killed"
     rm -f "$hook_marker"
     log "running port-forward $hook_name command"
-    sh -c "$resolved" &
+    # Own process group where setsid exists (it does in the image), so the
+    # kill below reaches what the hook itself started. Signalling only the
+    # shell leaves the real work running past its budget: an operator hook is
+    # usually a curl or a pipeline, not a single builtin.
+    if command -v setsid > /dev/null 2>&1; then
+        setsid sh -c "$resolved" &
+    else
+        sh -c "$resolved" &
+    fi
     hook_pid=$!
+    # The watchdog writes nothing to the caller's stdout: a background process
+    # holding that pipe keeps a command substitution around it waiting, long
+    # after the hook it watches is gone.
     (
         hook_left="$hook_budget"
         while [ "$hook_left" -gt 0 ]; do
@@ -74,11 +87,11 @@ run_port_hook() {
             hook_left=$((hook_left - 1))
         done
         kill -0 "$hook_pid" 2>/dev/null || exit 0
-        : >"$hook_marker"
-        kill -TERM "$hook_pid" 2>/dev/null
+        : > "$hook_marker"
+        kill -TERM "-$hook_pid" 2>/dev/null || kill -TERM "$hook_pid" 2>/dev/null
         sleep 5
-        kill -KILL "$hook_pid" 2>/dev/null
-    ) &
+        kill -KILL "-$hook_pid" 2>/dev/null || kill -KILL "$hook_pid" 2>/dev/null
+    ) > /dev/null 2>&1 &
     hook_watchdog=$!
     hook_rc=0
     wait "$hook_pid" 2>/dev/null || hook_rc=$?
