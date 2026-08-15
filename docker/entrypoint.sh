@@ -200,7 +200,10 @@ mapping_public_port() {
 }
 
 # Identities (internal port + CLI protocol name) of the rules the daemon has
-# configured, read from `warren port-forward get` on stdin.
+# configured, read from `warren port-forward get` on stdin. The format is the
+# one printed by warren-app's mullvad-cli `port_forward::print_settings`; a
+# reformat there silently disables the stale-rule clearing below, which is
+# what keeps this container on a single entitlement slot.
 parse_forward_rules() {
     while IFS= read -r rule_line; do
         case "$rule_line" in
@@ -385,7 +388,7 @@ command -v nft >/dev/null 2>&1 || fatal "nft missing from the image"
 mkdir -p "$(dirname "$WARREN_PORT_FORWARD_STATUS_FILE")"
 
 # ---- daemon ----------------------------------------------------------------
-# The resource dir is channel-dependent ("Warren VPN" vs "Warren VPN Beta").
+# The resource dir is baked by the packaging and differs between channels.
 # The .deb's own service unit knows it, so read it from there instead of
 # hardcoding one channel's path.
 if [ -z "${WARREN_RESOURCE_DIR:-}" ]; then
