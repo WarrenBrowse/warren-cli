@@ -26,6 +26,20 @@
 #   WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT        same on the stop path, default 5
 set -u
 
+# The image ENV carries these (docker/Dockerfile) and they are repeated here so
+# the script is correct standalone: sourced by the tests, or run from a derived
+# image that clears the ENV. Keep the two in sync.
+: "${WARREN_LOCKDOWN:=on}"
+: "${WARREN_LAN:=allow}"
+: "${WARREN_CONNECT_TIMEOUT:=90}"
+: "${WARREN_PORT_FORWARD_STATUS_FILE:=/tmp/warren/forwarded_port}"
+
+# The rule the watcher owns: the internal port it currently forwards, and the
+# external port it currently asks for (0 = the exit picks). Files, not shell
+# variables, because the watcher runs in a background subshell.
+INTERNAL_FILE="${WARREN_PORT_FORWARD_STATUS_FILE}.internal"
+EXTERNAL_FILE="${WARREN_PORT_FORWARD_STATUS_FILE}.external"
+
 log() { printf '%s [warren] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 fatal() { log "ERROR: $*"; exit 1; }
 
@@ -174,6 +188,68 @@ parse_forward_rules() {
         *) continue ;;
         esac
         printf '%s %s\n' "${rule_head%%/*}" "$rule_proto"
+    done
+}
+
+# After a grant of public port P with a different internal port, replace the
+# rule with internal=P so the app can listen AND announce on P (what torrent
+# clients need). One slot at a time: remove first, and enable only when the
+# remove actually happened. A remove that failed used to enable anyway, which
+# left the old rule beside the new one: two rules, two entitlement slots, and
+# a status file flip-flopping between two grants.
+#
+# The new rule pins P as its external port, so the re-point converges in one
+# step: the holder of P is this client's own predecessor rule and the exit
+# lets an owner reclaim its port. When that pin cannot be honoured the mapping
+# ends up `failed`, which forward_lost() turns back into a server pick.
+match_internal() { # <granted public port>
+    new_port="$1"
+    [ "${WARREN_PORT_FORWARD_MATCH_INTERNAL:-on}" = "on" ] || return 0
+    current_internal=$(cat "$INTERNAL_FILE")
+    [ "$new_port" != "$current_internal" ] || return 0
+    log "re-pointing forward rule to internal port $new_port"
+    if ! warren_cli port-forward remove \
+        --internal-port "$current_internal" \
+        --protocol "${WARREN_PORT_FORWARD_PROTOCOL:-both}" >/dev/null 2>&1; then
+        log "WARNING: could not clear the old forward rule; keeping internal port $current_internal"
+        return 0
+    fi
+    if warren_cli port-forward enable \
+        --internal-port "$new_port" \
+        --protocol "${WARREN_PORT_FORWARD_PROTOCOL:-both}" \
+        --external-port "$new_port" >/dev/null 2>&1; then
+        printf '%s\n' "$new_port" >"$INTERNAL_FILE"
+        printf '%s\n' "$new_port" >"$EXTERNAL_FILE"
+    else
+        log "WARNING: re-pointing the forward rule failed; restoring internal port $current_internal"
+        warren_cli port-forward enable \
+            --internal-port "$current_internal" \
+            --protocol "${WARREN_PORT_FORWARD_PROTOCOL:-both}" \
+            --external-port "$(cat "$EXTERNAL_FILE")" >/dev/null 2>&1 \
+            || log "WARNING: the old forward rule is gone and could not be restored"
+    fi
+}
+
+port_watcher() {
+    warren_cli port-forward status --watch 2>/dev/null | while IFS= read -r line; do
+        port=$(mapping_public_port "$line" "$(cat "$INTERNAL_FILE")")
+        if [ -n "$port" ]; then
+            previous=$(granted_port)
+            if [ "$port" != "$previous" ]; then
+                if [ -n "$previous" ]; then
+                    run_port_hook "${WARREN_PORT_FORWARD_DOWN_COMMAND:-}" "$previous" down
+                fi
+                printf '%s\n' "$port" >"${WARREN_PORT_FORWARD_STATUS_FILE}.tmp"
+                mv "${WARREN_PORT_FORWARD_STATUS_FILE}.tmp" "$WARREN_PORT_FORWARD_STATUS_FILE"
+                log "forwarded port granted: $port"
+                run_port_hook "${WARREN_PORT_FORWARD_UP_COMMAND:-}" "$port" up
+                match_internal "$port"
+            fi
+        else
+            case "$line" in
+            *": failed"* | *": disabled"* | *rate-limited*) log "port-forward status: $line" ;;
+            esac
+        fi
     done
 }
 
@@ -335,54 +411,9 @@ if [ -n "${WARREN_PORT_FORWARD_INTERNAL_PORT:-}" ]; then
         || fatal "enabling port forwarding failed"
     log "port forwarding enabled (internal port ${WARREN_PORT_FORWARD_INTERNAL_PORT})"
 
-    INTERNAL_FILE="${WARREN_PORT_FORWARD_STATUS_FILE}.internal"
     printf '%s\n' "$WARREN_PORT_FORWARD_INTERNAL_PORT" >"$INTERNAL_FILE"
+    printf '%s\n' "${WARREN_PORT_FORWARD_EXTERNAL_PORT:-0}" >"$EXTERNAL_FILE"
 
-    # After a grant of public port P with a different internal port, replace
-    # the rule with internal=P (one slot at a time: remove, then enable) so
-    # the app can listen AND announce on P. Skipped when
-    # WARREN_PORT_FORWARD_MATCH_INTERNAL=off.
-    match_internal() {
-        new_port="$1"
-        [ "${WARREN_PORT_FORWARD_MATCH_INTERNAL:-on}" = "on" ] || return 0
-        current_internal=$(cat "$INTERNAL_FILE")
-        [ "$new_port" != "$current_internal" ] || return 0
-        log "re-pointing forward rule to internal port $new_port"
-        warren_cli port-forward remove \
-            --internal-port "$current_internal" \
-            --protocol "${WARREN_PORT_FORWARD_PROTOCOL:-both}" >/dev/null 2>&1 || true
-        if warren_cli port-forward enable \
-            --internal-port "$new_port" \
-            --protocol "${WARREN_PORT_FORWARD_PROTOCOL:-both}" \
-            --external-port "$new_port" >/dev/null 2>&1; then
-            printf '%s\n' "$new_port" >"$INTERNAL_FILE"
-        else
-            log "WARNING: re-pointing the forward rule failed; keeping internal port $current_internal"
-        fi
-    }
-
-    port_watcher() {
-        warren_cli port-forward status --watch 2>/dev/null | while IFS= read -r line; do
-            port=$(mapping_public_port "$line" "$(cat "$INTERNAL_FILE")")
-            if [ -n "$port" ]; then
-                previous=$(granted_port)
-                if [ "$port" != "$previous" ]; then
-                    if [ -n "$previous" ]; then
-                        run_port_hook "${WARREN_PORT_FORWARD_DOWN_COMMAND:-}" "$previous" down
-                    fi
-                    printf '%s\n' "$port" >"${WARREN_PORT_FORWARD_STATUS_FILE}.tmp"
-                    mv "${WARREN_PORT_FORWARD_STATUS_FILE}.tmp" "$WARREN_PORT_FORWARD_STATUS_FILE"
-                    log "forwarded port granted: $port"
-                    run_port_hook "${WARREN_PORT_FORWARD_UP_COMMAND:-}" "$port" up
-                    match_internal "$port"
-                fi
-            else
-                case "$line" in
-                *": failed"* | *rate-limited*) log "port-forward status: $line" ;;
-                esac
-            fi
-        done
-    }
     port_watcher &
 fi
 

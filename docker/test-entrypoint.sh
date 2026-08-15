@@ -17,6 +17,16 @@ set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+TMP="$(mktemp -d)"
+cleanup() { rm -rf "$TMP"; }
+trap cleanup EXIT INT TERM
+WARREN_HOOK_STATE_DIR="$TMP"
+export WARREN_HOOK_STATE_DIR
+# Set before sourcing: the entrypoint derives the watcher's state-file paths
+# from it, and the tests drive that state directly.
+WARREN_PORT_FORWARD_STATUS_FILE="$TMP/forwarded_port"
+export WARREN_PORT_FORWARD_STATUS_FILE
+
 WARREN_ENTRYPOINT_LIB=1
 export WARREN_ENTRYPOINT_LIB
 # shellcheck source=./entrypoint.sh
@@ -69,12 +79,6 @@ check_fails() { # check_fails <description> <command...>
 		printf '  ok   %s\n' "$description"
 	fi
 }
-
-TMP="$(mktemp -d)"
-cleanup() { rm -rf "$TMP"; }
-trap cleanup EXIT INT TERM
-WARREN_HOOK_STATE_DIR="$TMP"
-export WARREN_HOOK_STATE_DIR
 
 echo "closed-set knobs"
 # A mistyped kill switch used to mean "off": the entrypoint compared against
@@ -190,6 +194,71 @@ if command -v setsid > /dev/null 2>&1; then
 else
 	echo "  skip what the hook started is killed with it (no setsid on this host)"
 fi
+
+
+echo "the port watcher"
+# The watcher is the whole feature: it turns a status line into a status file,
+# a hook and a re-pointed rule. It drives the CLI through warren_cli, so a
+# test can record the calls and replay a status stream in their place.
+CALLS="$TMP/cli-calls"
+FEED=""
+warren_cli() {
+	case "$*" in
+	"port-forward status --watch") printf '%s' "$FEED" ;;
+	*) printf '%s\n' "$*" >> "$CALLS" ;;
+	esac
+}
+# Both hooks append to one file, so their ordering is an assertion.
+WARREN_PORT_FORWARD_UP_COMMAND="echo up:{{PORT}} >>$TMP/order"
+WARREN_PORT_FORWARD_DOWN_COMMAND="echo down:{{PORT}} >>$TMP/order"
+export WARREN_PORT_FORWARD_UP_COMMAND WARREN_PORT_FORWARD_DOWN_COMMAND
+
+watch() { # watch <status line>
+	FEED="$1
+"
+	: > "$CALLS"
+	: > "$TMP/order"
+	port_watcher > /dev/null 2>&1
+}
+
+printf '6881\n' > "$INTERNAL_FILE"
+printf '0\n' > "$EXTERNAL_FILE"
+rm -f "$WARREN_PORT_FORWARD_STATUS_FILE"
+
+watch '6881/TCP+UDP: MAPPED, public port 51413'
+check "a grant lands in the status file" "51413" "$(cat "$WARREN_PORT_FORWARD_STATUS_FILE")"
+check "a grant runs the up hook with the granted port" "up:51413" "$(cat "$TMP/order")"
+# The application must be able to listen AND announce on one port, so the rule
+# is re-pointed to the granted one; one slot at a time, remove before enable.
+check "a grant re-points the rule to the granted port" \
+	"port-forward remove --internal-port 6881 --protocol both
+port-forward enable --internal-port 51413 --protocol both --external-port 51413" \
+	"$(cat "$CALLS")"
+check "and the watcher tracks the rule it now owns" "51413" "$(cat "$INTERNAL_FILE")"
+
+watch '51413/TCP+UDP: MAPPED, public port 51413'
+check "the same port again touches nothing" "" "$(cat "$CALLS")$(cat "$TMP/order")"
+
+watch '51413/TCP+UDP: MAPPED, public port 60000'
+check "a new port runs the down hook for the old one before the up hook" \
+	"down:51413
+up:60000" "$(cat "$TMP/order")"
+check "and the new port lands in the status file" "60000" "$(cat "$WARREN_PORT_FORWARD_STATUS_FILE")"
+
+# `enable` upserts, so enabling after a remove that failed leaves the old rule
+# beside the new one: two rules, two of the five entitlement slots, and a
+# status file that flip-flops between two grants.
+warren_cli() {
+	case "$*" in
+	"port-forward status --watch") printf '%s' "$FEED" ;;
+	"port-forward remove"*) printf '%s\n' "$*" >> "$CALLS"; return 1 ;;
+	*) printf '%s\n' "$*" >> "$CALLS" ;;
+	esac
+}
+watch '60000/TCP+UDP: MAPPED, public port 49999'
+check "a remove that failed does not enable a second rule" \
+	"port-forward remove --internal-port 60000 --protocol both" "$(cat "$CALLS")"
+check "and the watcher keeps naming the rule it still owns" "60000" "$(cat "$INTERNAL_FILE")"
 
 printf '\n%d checks, %d failure(s)\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]
