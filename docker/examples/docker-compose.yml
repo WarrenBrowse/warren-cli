@@ -16,7 +16,14 @@ services:
       - warren_mnemonic
     restart: unless-stopped
 
-  # Any container that should ride the tunnel joins the netns:
+  # Any container that should ride the tunnel joins the netns.
+  #
+  # Caveat: Docker replaces the network namespace when it restarts warren,
+  # and the services that joined the old one keep a handle on a destroyed
+  # namespace: no connectivity, no error, until they are restarted too.
+  # depends_on orders the start, it does not follow a restart. After any
+  # warren restart (and warren does exit when the tunnel cannot be
+  # established), run `docker compose restart whoami`.
   whoami:
     image: curlimages/curl
     network_mode: "service:warren"

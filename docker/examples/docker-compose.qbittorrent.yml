@@ -6,8 +6,23 @@
 # and announces on the exact port peers can reach. The granted port is also
 # readable at /tmp/warren/forwarded_port inside the warren container.
 #
-# qBittorrent's WebUI must allow localhost auth bypass (default for
-# 127.0.0.1) since both containers share one network namespace.
+# The Web API requires authentication, on localhost too: put the WebUI
+# credentials in a .env file next to this one,
+#
+#   QBT_USER=admin
+#   QBT_PASS=the-password-you-set-in-the-WebUI
+#
+# and set them in qBittorrent first. The linuxserver image prints a random
+# temporary password in `docker compose logs qbittorrent` on the very first
+# start; change it in the WebUI, then fill the .env in. Enabling
+# "Bypass authentication for clients on localhost" instead also works, but it
+# is a setting to turn on, not a default.
+#
+# Caveat: Docker replaces the network namespace when it restarts warren, and
+# qbittorrent keeps a handle on the destroyed one: it shows zero peers, with
+# no error, until it is restarted too. depends_on orders the start, it does
+# not follow a restart. After any warren restart, run
+# `docker compose restart qbittorrent`.
 services:
   warren:
     image: ghcr.io/warrenbrowse/warren-vpn:beta
@@ -21,8 +36,17 @@ services:
       - WARREN_RELAY_LOCATION=fi
       - WARREN_PORT_FORWARD_INTERNAL_PORT=6881
       - WARREN_PORT_FORWARD_PROTOCOL=both
+      # Log in first (the cookie lands in /tmp), then write the port. The
+      # retry budget is bounded: qBittorrent starts after warren, but a WebUI
+      # that never answers must not hold the hook (the entrypoint kills it at
+      # WARREN_PORT_HOOK_TIMEOUT anyway, defaulting to 30s).
       - >-
-        WARREN_PORT_FORWARD_UP_COMMAND=curl -fsS --retry 10 --retry-connrefused
+        WARREN_PORT_FORWARD_UP_COMMAND=curl -fsS --retry 5 --retry-connrefused
+        --retry-max-time 20 --max-time 10 -c /tmp/qbt.cookies
+        --data-urlencode 'username=${QBT_USER}'
+        --data-urlencode 'password=${QBT_PASS}'
+        http://127.0.0.1:8080/api/v2/auth/login &&
+        curl -fsS --max-time 10 -b /tmp/qbt.cookies
         --data-urlencode 'json={"listen_port":{{PORT}},"random_port":false,"upnp":false}'
         http://127.0.0.1:8080/api/v2/app/setPreferences
     ports:

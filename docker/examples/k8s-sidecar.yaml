@@ -3,6 +3,18 @@
 # kill switch (lockdown mode) protects it. The warren container needs
 # NET_ADMIN and /dev/net/tun.
 #
+# Requires Kubernetes 1.29 or newer, for native sidecars: warren is declared
+# as an initContainer with restartPolicy Always, so the kubelet starts it
+# first, holds the workload containers until its startup probe passes, and
+# restarts it in place if it dies. Declared as an ordinary container instead,
+# it would start CONCURRENTLY with the workload, which would then egress with
+# the node's real IP for the whole bring-up (daemon boot, login, subscription
+# check, connect: tens of seconds), before any firewall rule exists in the pod
+# netns. On an older cluster there is no ordering primitive for this: the
+# workload must block on its own gate (an init container that runs
+# /usr/local/bin/warren-healthcheck against a warren already running) or
+# tolerate that leak window.
+#
 # For cluster-wide egress through a single gateway pod, the same image works
 # under https://github.com/angelnu/pod-gateway; see docs/DOCKER.md.
 apiVersion: v1
@@ -27,9 +39,12 @@ spec:
       labels:
         app: app-behind-warren
     spec:
-      containers:
+      initContainers:
         - name: warren
           image: ghcr.io/warrenbrowse/warren-vpn:beta
+          # A native sidecar: it never terminates, and the kubelet keeps the
+          # regular containers pending until its startupProbe succeeds.
+          restartPolicy: Always
           securityContext:
             capabilities:
               add: ["NET_ADMIN"]
@@ -44,15 +59,22 @@ spec:
               readOnly: true
             - name: dev-net-tun
               mountPath: /dev/net/tun
+          # The probes exec a process that opens the daemon's management
+          # socket, and WARREN_HEALTH_TARGET adds a fetch with --max-time 10
+          # on top. The kubelet's default timeoutSeconds is 1, which would
+          # restart the sidecar in a loop and take the pod's network with it.
           startupProbe:
             exec:
               command: ["/usr/local/bin/warren-healthcheck"]
             periodSeconds: 5
+            timeoutSeconds: 5
             failureThreshold: 30
           livenessProbe:
             exec:
               command: ["/usr/local/bin/warren-healthcheck"]
             periodSeconds: 60
+            timeoutSeconds: 15
+      containers:
         - name: app
           image: curlimages/curl
           command: ["sh", "-c", "while true; do curl -fsS https://icanhazip.com; sleep 300; done"]
