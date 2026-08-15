@@ -260,5 +260,37 @@ check "a remove that failed does not enable a second rule" \
 	"port-forward remove --internal-port 60000 --protocol both" "$(cat "$CALLS")"
 check "and the watcher keeps naming the rule it still owns" "60000" "$(cat "$INTERNAL_FILE")"
 
+# The exit can stop announcing our port (a pinned port taken by someone else
+# ends `failed` after ten minutes of retries). Nothing used to act on that: the
+# hooks stayed silent and the status file kept naming a dead port forever.
+check_true "our own rule failing is a lost mapping" \
+	mapping_lost '6881/TCP+UDP: failed (port in use)' 6881
+check_true "our own rule going disabled is a lost mapping" \
+	mapping_lost '6881/TCP+UDP: disabled' 6881
+check_fails "another rule failing is not ours" \
+	mapping_lost '6881/TCP+UDP: failed (port in use)' 51413
+check_fails "a live mapping is not a lost one" \
+	mapping_lost '6881/TCP+UDP: MAPPED, public port 51413' 6881
+
+warren_cli() {
+	case "$*" in
+	"port-forward status --watch") printf '%s' "$FEED" ;;
+	*) printf '%s\n' "$*" >> "$CALLS" ;;
+	esac
+}
+printf '60000\n' > "$INTERNAL_FILE"
+printf '60000\n' > "$EXTERNAL_FILE"
+printf '60000\n' > "$WARREN_PORT_FORWARD_STATUS_FILE"
+watch '60000/TCP+UDP: failed (suggested port in use)'
+check "a lost mapping tells the application, once" "down:60000" "$(cat "$TMP/order")"
+check "and stops naming a port the exit no longer maps" "" "$(cat "$WARREN_PORT_FORWARD_STATUS_FILE")"
+# The pin is what failed, so asking for it again would fail the same way: the
+# rule goes back to a server pick and the next grant re-points onto it.
+check "and asks for a server-picked port instead of the pin that failed" \
+	"port-forward enable --internal-port 60000 --protocol both --external-port 0" \
+	"$(cat "$CALLS")"
+watch '60000/TCP+UDP: failed (suggested port in use)'
+check "a repeated failure for the same rule changes nothing more" "" "$(cat "$CALLS")$(cat "$TMP/order")"
+
 printf '\n%d checks, %d failure(s)\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]

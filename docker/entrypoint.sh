@@ -20,7 +20,7 @@
 #       and announce on the same port (what torrent clients need); the
 #       up-command tells the app which port that is
 #   WARREN_PORT_FORWARD_UP_COMMAND           run on grant, {{PORT}} substituted
-#   WARREN_PORT_FORWARD_DOWN_COMMAND         run on shutdown/regrant
+#   WARREN_PORT_FORWARD_DOWN_COMMAND         run on regrant/loss/shutdown
 #   WARREN_PORT_FORWARD_STATUS_FILE          default /tmp/warren/forwarded_port
 #   WARREN_PORT_HOOK_TIMEOUT                 seconds a hook may run, default 30
 #   WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT        same on the stop path, default 5
@@ -230,6 +230,41 @@ match_internal() { # <granted public port>
     fi
 }
 
+# Whether a status line says OUR mapping is gone. `failed` and `disabled` are
+# terminal for that rule: the exit has stopped announcing the port, so an
+# application still told to use it is unreachable with nothing to say so.
+mapping_lost() { # <status line> <our internal port>
+    lost_line="$1"; lost_internal="$2"
+    case "$lost_line" in
+    *": failed"* | *": disabled"*) ;;
+    *) return 1 ;;
+    esac
+    [ "${lost_line%%/*}" = "$lost_internal" ]
+}
+
+# Act on a mapping the exit no longer serves: tell the application once, stop
+# naming a dead port, and, when what failed was a pinned external port, drop
+# back to a server pick. A pin that lost its port stays failed forever
+# otherwise: the daemon substitutes nothing for a pin, and no other part of
+# this container would ever ask for a different port.
+forward_lost() {
+    lost_port=$(granted_port)
+    if [ -n "$lost_port" ]; then
+        log "forwarded port lost: $lost_port"
+        run_port_hook "${WARREN_PORT_FORWARD_DOWN_COMMAND:-}" "$lost_port" down
+        : > "$WARREN_PORT_FORWARD_STATUS_FILE"
+    fi
+    [ "$(cat "$EXTERNAL_FILE" 2>/dev/null || true)" != "0" ] || return 0
+    lost_internal=$(cat "$INTERNAL_FILE")
+    printf '%s\n' 0 >"$EXTERNAL_FILE"
+    log "re-requesting a server-picked public port for internal port $lost_internal"
+    warren_cli port-forward enable \
+        --internal-port "$lost_internal" \
+        --protocol "${WARREN_PORT_FORWARD_PROTOCOL:-both}" \
+        --external-port 0 >/dev/null 2>&1 \
+        || log "WARNING: could not re-request a public port"
+}
+
 port_watcher() {
     warren_cli port-forward status --watch 2>/dev/null | while IFS= read -r line; do
         port=$(mapping_public_port "$line" "$(cat "$INTERNAL_FILE")")
@@ -249,6 +284,9 @@ port_watcher() {
             case "$line" in
             *": failed"* | *": disabled"* | *rate-limited*) log "port-forward status: $line" ;;
             esac
+            if mapping_lost "$line" "$(cat "$INTERNAL_FILE")"; then
+                forward_lost
+            fi
         fi
     done
 }

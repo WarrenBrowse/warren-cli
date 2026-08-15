@@ -81,7 +81,7 @@ Compose examples live in `docker/examples/`:
 | `WARREN_PORT_FORWARD_LIFETIME` | | requested mapping lifetime in seconds, exit clamps to [60, 3600] |
 | `WARREN_PORT_FORWARD_MATCH_INTERNAL` | `on` | after a grant of public port P, re-point the rule to internal P so the app can listen and announce on the same port (torrent clients need this) |
 | `WARREN_PORT_FORWARD_UP_COMMAND` | | run (via `sh -c`, inside this container) each time a public port is granted, `{{PORT}}` substituted |
-| `WARREN_PORT_FORWARD_DOWN_COMMAND` | | run when the port is released or replaced, `{{PORT}}` substituted |
+| `WARREN_PORT_FORWARD_DOWN_COMMAND` | | run with the port that is going away, `{{PORT}}` substituted: when a new grant replaces it, when the exit stops serving the mapping, and at shutdown |
 | `WARREN_PORT_FORWARD_STATUS_FILE` | `/tmp/warren/forwarded_port` | the granted public port, one decimal, rewritten on change |
 | `WARREN_PORT_HOOK_TIMEOUT` | `30` | seconds a hook may run before it, and what it started, are killed (SIGTERM, then SIGKILL 5s later) |
 | `WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT` | `5` | same bound on the stop path; keep it well under the orchestrator's stop grace so the disconnect still runs |
@@ -116,6 +116,15 @@ subscription fleet-wide, public range 49152-65535). In this image:
 
 The granted port can change when the mapping is re-established; the watcher
 re-runs the down/up commands and rewrites the status file each time.
+
+When the exit stops serving the mapping (a `failed` or `disabled` status line
+for this container's rule), the down command runs once, the status file is
+emptied so nothing keeps reading a port that no longer exists, and the rule
+goes back to a server-picked public port. That last step matters because a
+pinned port is a contract the daemon never substitutes: the rule the re-point
+installs asks for one exact port, and if another client is holding it the
+mapping stays failed for the container's whole life unless something asks for
+a different one.
 
 Three things the container guarantees around those hooks:
 
