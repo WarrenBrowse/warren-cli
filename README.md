@@ -69,6 +69,17 @@ rather than a loader error, and 32-bit ARM and riscv64, which are not published.
 Every artifact is checksummed in the release's `SHA256SUMS`, and every installer
 verifies against it.
 
+## Beyond the desktop
+
+Not every machine wants a package and a service. Pick the artifact for the box
+you have, then read its document.
+
+| Your machine | Artifact |
+|---|---|
+| Docker, a NAS (Synology, QNAP, Unraid, TrueNAS), Kubernetes | the `warren-vpn` container image: [`docs/DOCKER.md`](docs/DOCKER.md) |
+| A Linux server you install onto directly | the packages and their service wiring: [`docs/INSTALL-SERVER.md`](docs/INSTALL-SERVER.md) |
+| Any box where root, `NET_ADMIN` or `/dev/net/tun` are out of reach | `warren-proxy`, the unprivileged SOCKS5 / HTTP daemon: [its README](https://github.com/WarrenBrowse/warren-sdk-rs/blob/main/crates/warren-proxy/README.md) in warren-sdk-rs |
+
 ## Quick start (once a package is installed)
 
 ```bash
