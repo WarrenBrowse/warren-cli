@@ -1,0 +1,130 @@
+#!/usr/bin/env sh
+#
+# Unit tests for the container entrypoint's helpers.
+#
+# The entrypoint is the only thing standing between an operator's env and a
+# daemon that must never leak, so the parts that decide something (which
+# status line is ours, which rules to clear, how long a hook may run) are
+# written as pure functions and pinned here. Nothing below starts a daemon,
+# touches the network or needs privileges.
+#
+#   sh docker/test-entrypoint.sh
+#
+# Sourcing the entrypoint with WARREN_ENTRYPOINT_LIB=1 loads the functions
+# and stops before anything is started.
+
+set -eu
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+WARREN_ENTRYPOINT_LIB=1
+export WARREN_ENTRYPOINT_LIB
+# shellcheck source=./entrypoint.sh
+. "$SCRIPT_DIR/entrypoint.sh"
+
+failures=0
+checks=0
+
+check() { # check <description> <expected> <actual>
+	checks=$((checks + 1))
+	if [ "$2" = "$3" ]; then
+		printf '  ok   %s\n' "$1"
+	else
+		printf '  FAIL %s\n       expected: %s\n       actual:   %s\n' "$1" "$2" "$3"
+		failures=$((failures + 1))
+	fi
+}
+
+check_contains() { # check_contains <description> <needle> <haystack>
+	checks=$((checks + 1))
+	case "$3" in
+	*"$2"*) printf '  ok   %s\n' "$1" ;;
+	*)
+		printf '  FAIL %s\n       expected to contain: %s\n       actual: %s\n' "$1" "$2" "$3"
+		failures=$((failures + 1))
+		;;
+	esac
+}
+
+check_true() { # check_true <description> <condition...>
+	checks=$((checks + 1))
+	description="$1"
+	shift
+	if "$@" > /dev/null 2>&1; then
+		printf '  ok   %s\n' "$description"
+	else
+		printf '  FAIL %s\n' "$description"
+		failures=$((failures + 1))
+	fi
+}
+
+TMP="$(mktemp -d)"
+cleanup() { rm -rf "$TMP"; }
+trap cleanup EXIT INT TERM
+WARREN_HOOK_STATE_DIR="$TMP"
+export WARREN_HOOK_STATE_DIR
+
+echo "which mapping line is ours"
+# The daemon prints one line per configured rule. Acting on any MAPPED line
+# makes a second rule look like a new grant for ours, which flip-flops the
+# status file and the hooks forever.
+check "our own rule's grant is the granted port" \
+	"51413" \
+	"$(mapping_public_port '6881/TCP+UDP: MAPPED, public port 51413' 6881)"
+check "another rule's grant is not ours" \
+	"" \
+	"$(mapping_public_port '6881/TCP+UDP: MAPPED, public port 51413' 51413)"
+check "a rule whose internal port merely shares a prefix is not ours" \
+	"" \
+	"$(mapping_public_port '68810/TCP+UDP: MAPPED, public port 51413' 6881)"
+check "a mapping still being requested grants nothing" \
+	"" \
+	"$(mapping_public_port '6881/TCP+UDP: requesting...' 6881)"
+check "a failed mapping grants nothing" \
+	"" \
+	"$(mapping_public_port '6881/TCP+UDP: failed (port in use)' 6881)"
+check "a MAPPED line carrying no public port grants nothing" \
+	"" \
+	"$(mapping_public_port '6881/TCP+UDP: MAPPED' 6881)"
+
+echo "configured rule identities"
+# `enable --internal-port` upserts, and the rules are persisted in the
+# settings dir, so a re-pointed rule from a previous run survives a restart
+# and coexists with the configured one. Clearing them needs their identity
+# back out of the CLI's own listing.
+check "every rule is recovered with the CLI's protocol spelling" \
+	"6881 both
+51413 udp
+80 tcp" \
+	"$(printf 'Port forwarding: on\nRequested lifetime: 3600s\nRules:\n  6881/TCP+UDP internal 6881 -> external auto\n  51413/UDP internal 51413 -> external 51413\n  80/TCP internal 80 -> external auto\n' | parse_forward_rules)"
+check "a listing with no rules yields no identity" \
+	"" \
+	"$(printf 'Port forwarding: off\nRequested lifetime: 3600s\nRules: none\n' | parse_forward_rules)"
+
+echo "port hooks"
+check "an empty hook is a no-op" "" "$(run_port_hook "" 51413 up)"
+
+run_port_hook "printf %s {{PORT}} >$TMP/ran" 51413 up >/dev/null 2>&1
+check "the hook runs with {{PORT}} substituted" "51413" "$(cat "$TMP/ran")"
+
+out="$(run_port_hook 'exit 3' 51413 up 2>&1)"
+check_contains "a failing hook is reported, not swallowed" "up command failed" "$out"
+check_true "a failing hook does not abort the watcher" run_port_hook 'exit 3' 51413 up
+
+# A hook that never returns used to be awaited forever: the watcher stopped
+# consuming status lines (no later grant was ever seen) and, on the stop
+# path, the whole container grace period was burnt before the disconnect.
+start="$(date +%s)"
+out="$(WARREN_PORT_HOOK_TIMEOUT=1 run_port_hook 'sleep 60' 51413 up 2>&1)"
+elapsed=$(($(date +%s) - start))
+check_contains "a hook that never returns is killed and says so" "timed out" "$out"
+check_true "and it is killed within its budget" [ "$elapsed" -lt 15 ]
+
+start="$(date +%s)"
+out="$(run_port_hook 'sleep 60' 51413 down 1 2>&1)"
+elapsed=$(($(date +%s) - start))
+check_contains "the shutdown path can ask for a smaller budget" "timed out" "$out"
+check_true "which is honoured" [ "$elapsed" -lt 15 ]
+
+printf '\n%d checks, %d failure(s)\n' "$checks" "$failures"
+[ "$failures" -eq 0 ]

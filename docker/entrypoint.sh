@@ -22,6 +22,8 @@
 #   WARREN_PORT_FORWARD_UP_COMMAND           run on grant, {{PORT}} substituted
 #   WARREN_PORT_FORWARD_DOWN_COMMAND         run on shutdown/regrant
 #   WARREN_PORT_FORWARD_STATUS_FILE          default /tmp/warren/forwarded_port
+#   WARREN_PORT_HOOK_TIMEOUT                 seconds a hook may run, default 30
+#   WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT        same on the stop path, default 5
 set -u
 
 log() { printf '%s [warren] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
@@ -41,6 +43,99 @@ read_secret() {
 }
 
 warren_cli() { /usr/bin/warren "$@"; }
+
+# The port watcher runs in a background subshell, so the granted port is
+# shared through the status file, never through a shell variable.
+granted_port() {
+    [ -r "$WARREN_PORT_FORWARD_STATUS_FILE" ] && cat "$WARREN_PORT_FORWARD_STATUS_FILE" || true
+}
+
+# Run an operator hook under a hard time bound. A hook that never returns
+# would freeze the watcher (it stops consuming status lines, so no later
+# grant is ever seen) and, on the stop path, burn the whole container grace
+# period before the disconnect runs. The bound is a shell watchdog rather
+# than timeout(1) so the same code is exercised by the unit tests on any
+# POSIX host; SIGTERM first, SIGKILL five seconds later.
+run_port_hook() {
+    hook_cmd="$1"; hook_port="$2"; hook_name="$3"
+    hook_budget="${4:-${WARREN_PORT_HOOK_TIMEOUT:-30}}"
+    [ -n "$hook_cmd" ] || return 0
+    resolved=$(printf '%s' "$hook_cmd" | sed "s/{{PORT}}/$hook_port/g")
+    hook_marker="${WARREN_HOOK_STATE_DIR:-/tmp}/warren-hook-$hook_name-$$.killed"
+    rm -f "$hook_marker"
+    log "running port-forward $hook_name command"
+    sh -c "$resolved" &
+    hook_pid=$!
+    (
+        hook_left="$hook_budget"
+        while [ "$hook_left" -gt 0 ]; do
+            kill -0 "$hook_pid" 2>/dev/null || exit 0
+            sleep 1
+            hook_left=$((hook_left - 1))
+        done
+        kill -0 "$hook_pid" 2>/dev/null || exit 0
+        : >"$hook_marker"
+        kill -TERM "$hook_pid" 2>/dev/null
+        sleep 5
+        kill -KILL "$hook_pid" 2>/dev/null
+    ) &
+    hook_watchdog=$!
+    hook_rc=0
+    wait "$hook_pid" 2>/dev/null || hook_rc=$?
+    kill "$hook_watchdog" 2>/dev/null || true
+    wait "$hook_watchdog" 2>/dev/null || true
+    if [ -f "$hook_marker" ]; then
+        rm -f "$hook_marker"
+        log "WARNING: port-forward $hook_name command timed out after ${hook_budget}s and was killed"
+    elif [ "$hook_rc" -ne 0 ]; then
+        log "WARNING: port-forward $hook_name command failed (exit $hook_rc)"
+    fi
+    return 0
+}
+
+# The public port granted to OUR rule, or nothing. The daemon prints one
+# status line per configured rule, so a line is only ours when its internal
+# port is the one this container currently forwards; acting on any MAPPED
+# line makes a second rule look like a new grant and flip-flops the status
+# file, the hooks and the rule list forever.
+mapping_public_port() {
+    map_line="$1"; map_internal="$2"
+    case "$map_line" in
+    *": MAPPED, public port "*) ;;
+    *) return 0 ;;
+    esac
+    [ "${map_line%%/*}" = "$map_internal" ] || return 0
+    printf '%s\n' "${map_line##*public port }"
+}
+
+# Identities (internal port + CLI protocol name) of the rules the daemon has
+# configured, read from `warren port-forward get` on stdin.
+parse_forward_rules() {
+    while IFS= read -r rule_line; do
+        case "$rule_line" in
+        *" internal "*" -> external "*) ;;
+        *) continue ;;
+        esac
+        rule_head="${rule_line%% internal *}"
+        while [ "${rule_head# }" != "$rule_head" ]; do rule_head="${rule_head# }"; done
+        case "${rule_head##*/}" in
+        UDP) rule_proto=udp ;;
+        TCP) rule_proto=tcp ;;
+        TCP+UDP) rule_proto=both ;;
+        *) continue ;;
+        esac
+        printf '%s %s\n' "${rule_head%%/*}" "$rule_proto"
+    done
+}
+
+# Sourced by the unit tests, which want the functions and nothing else.
+if [ "${WARREN_ENTRYPOINT_LIB:-0}" = "1" ]; then
+    return 0 2>/dev/null || exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Everything below runs only when this file is executed.
+# ---------------------------------------------------------------------------
 
 MNEMONIC=$(read_secret WARREN_MNEMONIC_FILE WARREN_MNEMONIC)
 VOUCHER=$(read_secret WARREN_VOUCHER_FILE WARREN_VOUCHER)
@@ -76,28 +171,15 @@ until warren_cli status >/dev/null 2>&1; do
 done
 
 # ---- shutdown path ---------------------------------------------------------
-# The port watcher runs in a background subshell, so the granted port is
-# shared through the status file, never through a shell variable.
-granted_port() {
-    [ -r "$WARREN_PORT_FORWARD_STATUS_FILE" ] && cat "$WARREN_PORT_FORWARD_STATUS_FILE" || true
-}
-
-run_port_hook() {
-    hook_cmd="$1"; hook_port="$2"; hook_name="$3"
-    [ -n "$hook_cmd" ] || return 0
-    resolved=$(printf '%s' "$hook_cmd" | sed "s/{{PORT}}/$hook_port/g")
-    log "running port-forward $hook_name command"
-    if ! sh -c "$resolved"; then
-        log "WARNING: port-forward $hook_name command failed"
-    fi
-}
-
 shutdown() {
     trap '' TERM INT
     log "shutting down"
     last_port=$(granted_port)
     if [ -n "$last_port" ]; then
-        run_port_hook "${WARREN_PORT_FORWARD_DOWN_COMMAND:-}" "$last_port" down
+        # Strictly under the container stop grace period: the disconnect below
+        # is what tears the tunnel down cleanly, and it must still get to run.
+        run_port_hook "${WARREN_PORT_FORWARD_DOWN_COMMAND:-}" "$last_port" down \
+            "${WARREN_PORT_HOOK_SHUTDOWN_TIMEOUT:-5}"
     fi
     warren_cli disconnect --wait >/dev/null 2>&1 || true
     kill "$DAEMON_PID" 2>/dev/null || true
@@ -167,6 +249,20 @@ warren_cli status | head -2
 # across epochs, so a watcher keeps the status file and the up-command in
 # sync, gluetun-style (VPN_PORT_FORWARDING_UP_COMMAND equivalent).
 if [ -n "${WARREN_PORT_FORWARD_INTERNAL_PORT:-}" ]; then
+    # The daemon persists its rules in the settings dir, and `enable
+    # --internal-port` upserts rather than replaces, so a rule this container
+    # re-pointed in a previous run comes back alongside the configured one.
+    # Two rules burn two of the five fleet-wide entitlement slots and make
+    # every status update look like a port change. One container forwards one
+    # port: start from an empty rule list, always.
+    warren_cli port-forward get 2>/dev/null | parse_forward_rules \
+        | while read -r stale_internal stale_proto; do
+        log "clearing stale forward rule ${stale_internal}/${stale_proto}"
+        warren_cli port-forward remove \
+            --internal-port "$stale_internal" \
+            --protocol "$stale_proto" >/dev/null 2>&1 || true
+    done
+
     set -- --internal-port "$WARREN_PORT_FORWARD_INTERNAL_PORT" \
         --protocol "${WARREN_PORT_FORWARD_PROTOCOL:-both}" \
         --external-port "${WARREN_PORT_FORWARD_EXTERNAL_PORT:-0}"
@@ -205,9 +301,8 @@ if [ -n "${WARREN_PORT_FORWARD_INTERNAL_PORT:-}" ]; then
 
     port_watcher() {
         warren_cli port-forward status --watch 2>/dev/null | while IFS= read -r line; do
-            case "$line" in
-            *"MAPPED, public port "*)
-                port=${line##*public port }
+            port=$(mapping_public_port "$line" "$(cat "$INTERNAL_FILE")")
+            if [ -n "$port" ]; then
                 previous=$(granted_port)
                 if [ "$port" != "$previous" ]; then
                     if [ -n "$previous" ]; then
@@ -219,11 +314,11 @@ if [ -n "${WARREN_PORT_FORWARD_INTERNAL_PORT:-}" ]; then
                     run_port_hook "${WARREN_PORT_FORWARD_UP_COMMAND:-}" "$port" up
                     match_internal "$port"
                 fi
-                ;;
-            *": failed"* | *rate-limited*)
-                log "port-forward status: $line"
-                ;;
-            esac
+            else
+                case "$line" in
+                *": failed"* | *rate-limited*) log "port-forward status: $line" ;;
+                esac
+            fi
         done
     }
     port_watcher &
