@@ -185,3 +185,28 @@ jobs:
             WARREN_DAEMON_VERSION=${{ steps.resolve.outputs.version }}
           push: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
           tags: ${{ steps.resolve.outputs.tags }}
+      - name: Check the image is reachable without a GitHub account
+        if: steps.resolve.outputs.skip != 'true' && (github.event_name == 'release' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+        env:
+          CHANNEL: ${{ steps.resolve.outputs.channel }}
+        run: |
+          set -uo pipefail
+          image=warrenbrowse/warren-vpn
+          if [ "$CHANNEL" = "beta" ]; then ref="beta"; else ref="latest"; fi
+          # A GHCR package is created private, and no REST endpoint flips it:
+          # the only way is the package settings page. So the publish says so
+          # itself rather than leaving every documented `docker run` broken for
+          # everyone outside the org until somebody notices.
+          token=$(curl -fsSL "https://ghcr.io/token?scope=repository:${image}:pull&service=ghcr.io" \
+            | sed -nE 's/.*"token":"([^"]+)".*/\1/p') || token=""
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${token}" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json' \
+            "https://ghcr.io/v2/${image}/manifests/${ref}")
+          if [ "$code" = "200" ]; then
+            echo "anonymous pull of ghcr.io/${image}:${ref} answers 200"
+          else
+            msg="ghcr.io/${image} is not public (anonymous manifest read answered ${code}), so every documented docker run and compose file fails for anyone outside the org. Fix: https://github.com/orgs/WarrenBrowse/packages/container/warren-vpn/settings, Danger Zone, Change visibility, Public."
+            echo "::warning::${msg}"
+            echo "$msg" >>"$GITHUB_STEP_SUMMARY"
+          fi
