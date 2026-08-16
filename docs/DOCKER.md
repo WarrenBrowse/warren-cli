@@ -248,6 +248,12 @@ gates nothing but that container.
   as the account in the volume. It compares the two and logs a `WARNING`
   naming the trap; to actually switch identity, delete the volume (or run
   `warren account login` inside the container).
+- **A `_FILE` variable that does not point at a readable file stops the
+  container, by name.** The most common way to get there is a bind mount of a
+  host path the docker daemon cannot see: it creates an empty DIRECTORY at the
+  target rather than failing, which is why the refusal names the directory and
+  says so. `WARREN_VOUCHER_FILE` behaves the same. Check the host path exists
+  before the mount, and that the file is not empty.
 - The image needs `--cap-add NET_ADMIN` and `--device /dev/net/tun`; it uses
   nftables inside its own namespace and never touches the host firewall.
 - DNS inside the namespace is rewritten to the in-tunnel resolver by the

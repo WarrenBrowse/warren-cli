@@ -139,6 +139,89 @@ out="$(knobs_with WARREN_PORT_WATCHER_MAX_RESTARTS many 2>&1 || true)"
 check_contains "and the numeric refusal names the knob and the value" \
 	"WARREN_PORT_WATCHER_MAX_RESTARTS must be a whole number (got 'many')" "$out"
 
+echo "reading a secret"
+# read_secret used to PRINT the secret, so its call site was a command
+# substitution and fatal could only end that subshell: the ERROR line became
+# the value. A WARREN_MNEMONIC_FILE bind-mounted from a host path docker had
+# to invent (it materialises an empty directory) handed the daemon an
+# 87-character 10-word error message, and the daemon answered "mnemonic has an
+# invalid word count: 10" while the real diagnostic was gone. The secret now
+# reaches the caller through a named variable, so a refusal ends the container.
+SECRETS="$TMP/secrets"
+mkdir -p "$SECRETS/mount-docker-invented"
+printf 'word one two\n' > "$SECRETS/phrase"
+: > "$SECRETS/empty"
+mkfifo "$SECRETS/not-a-file"
+printf 'word one two\n' > "$SECRETS/no-permission"
+chmod 000 "$SECRETS/no-permission"
+
+# The read is followed by a print of what it produced, so an output carrying
+# VALUE: is a secret the entrypoint would have gone on to use.
+secret_read() { # secret_read <file variable> <path>
+	(
+		eval "$1=\$2; export $1"
+		SECRET=""
+		read_secret SECRET "$1" "${1%_FILE}"
+		printf 'VALUE:%s' "$SECRET"
+	) 2>&1
+}
+no_secret_from() { # no_secret_from <file variable> <path>
+	case "$(secret_read "$1" "$2")" in
+	*VALUE:*) return 1 ;;
+	esac
+}
+
+check_fails "a file that is not there stops the container" \
+	secret_read WARREN_MNEMONIC_FILE "$SECRETS/absent"
+check_contains "and the refusal names the variable" "WARREN_MNEMONIC_FILE" \
+	"$(secret_read WARREN_MNEMONIC_FILE "$SECRETS/absent")"
+check_true "and produces no secret" no_secret_from WARREN_MNEMONIC_FILE "$SECRETS/absent"
+
+check_fails "a directory where a file was mounted stops the container" \
+	secret_read WARREN_MNEMONIC_FILE "$SECRETS/mount-docker-invented"
+check_contains "and the refusal names what docker did" "docker creates one" \
+	"$(secret_read WARREN_MNEMONIC_FILE "$SECRETS/mount-docker-invented")"
+check_true "and produces no secret" no_secret_from WARREN_MNEMONIC_FILE "$SECRETS/mount-docker-invented"
+
+check_fails "a path that is not a regular file stops the container" \
+	secret_read WARREN_MNEMONIC_FILE "$SECRETS/not-a-file"
+check_true "and produces no secret" no_secret_from WARREN_MNEMONIC_FILE "$SECRETS/not-a-file"
+
+# The voucher goes through the same function, and the operator reading the log
+# has to see the variable THEY set rather than the one it was written for.
+check_fails "an empty secret file stops the container" \
+	secret_read WARREN_VOUCHER_FILE "$SECRETS/empty"
+check_contains "and the refusal names the variable the operator set" "WARREN_VOUCHER_FILE" \
+	"$(secret_read WARREN_VOUCHER_FILE "$SECRETS/empty")"
+check_true "and produces no secret" no_secret_from WARREN_VOUCHER_FILE "$SECRETS/empty"
+
+if [ -r "$SECRETS/no-permission" ]; then
+	printf '  --   a file the container cannot read: this user reads it anyway\n'
+else
+	check_fails "a file the container cannot read stops it" \
+		secret_read WARREN_MNEMONIC_FILE "$SECRETS/no-permission"
+	check_true "and produces no secret" no_secret_from WARREN_MNEMONIC_FILE "$SECRETS/no-permission"
+fi
+
+WARREN_MNEMONIC_FILE="$SECRETS/phrase"
+export WARREN_MNEMONIC_FILE
+SECRET="unset"
+read_secret SECRET WARREN_MNEMONIC_FILE WARREN_MNEMONIC
+check "a readable file reaches the caller's variable, trailing newline stripped" \
+	"word one two" "$SECRET"
+unset WARREN_MNEMONIC_FILE
+
+WARREN_MNEMONIC="env one two"
+export WARREN_MNEMONIC
+SECRET="unset"
+read_secret SECRET WARREN_MNEMONIC_FILE WARREN_MNEMONIC
+check "the plain variable is read when no file is named" "env one two" "$SECRET"
+unset WARREN_MNEMONIC
+
+SECRET="unset"
+read_secret SECRET WARREN_MNEMONIC_FILE WARREN_MNEMONIC
+check "neither set is an empty secret, not a refusal" "" "$SECRET"
+
 echo "connect failures"
 # `timeout N warren connect --wait` fails for two very different reasons, and
 # reporting both as "did not come up within 90s" sent an operator looking for

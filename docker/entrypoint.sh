@@ -60,17 +60,29 @@ MAIN_PID=$$
 log() { printf '%s [warren] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 fatal() { log "ERROR: $*"; exit 1; }
 
-# Read a secret: the _FILE variant wins, trailing newline stripped, value
-# never printed anywhere.
-read_secret() {
-    file_var="$1"; env_var="$2"
-    file_val=$(eval "printf '%s' \"\${$file_var:-}\"")
-    if [ -n "$file_val" ]; then
-        { [ -f "$file_val" ] && [ -r "$file_val" ]; } || fatal "$file_var must point at a readable file"
-        cat "$file_val"
+# Read a secret into the variable named by the first argument: the _FILE
+# variant wins, trailing newline stripped, value never printed anywhere.
+#
+# It assigns rather than prints because a bad source has to end the CONTAINER.
+# Printing put every call in a command substitution, where fatal ended the
+# subshell alone and its own message became the secret: a WARREN_MNEMONIC_FILE
+# bind-mounted from a host path docker had to invent (it materialises an empty
+# directory) sent the daemon an 87-character 10-word error line, and the
+# operator was told the recovery phrase had 10 words.
+read_secret() { # <destination variable> <file variable> <plain variable>
+    rs_dest="$1"; rs_file_var="$2"; rs_env_var="$3"
+    eval "rs_file=\${$rs_file_var:-}"
+    if [ -n "$rs_file" ]; then
+        [ -e "$rs_file" ] || fatal "$rs_file_var points at $rs_file, which does not exist"
+        [ ! -d "$rs_file" ] || fatal "$rs_file_var points at the directory $rs_file (docker creates one when it bind-mounts a host path it cannot see)"
+        { [ -f "$rs_file" ] && [ -r "$rs_file" ]; } || fatal "$rs_file_var points at $rs_file, which is not a readable file"
+        rs_value=$(cat "$rs_file") || fatal "$rs_file_var: cannot read $rs_file"
+        [ -n "$rs_value" ] || fatal "$rs_file_var points at $rs_file, which is empty"
     else
-        eval "printf '%s' \"\${$env_var:-}\""
+        eval "rs_value=\${$rs_env_var:-}"
     fi
+    eval "$rs_dest=\$rs_value"
+    rs_value=""
 }
 
 warren_cli() { /usr/bin/warren "$@"; }
@@ -510,8 +522,8 @@ fi
 # Everything below runs only when this file is executed.
 # ---------------------------------------------------------------------------
 
-MNEMONIC=$(read_secret WARREN_MNEMONIC_FILE WARREN_MNEMONIC)
-VOUCHER=$(read_secret WARREN_VOUCHER_FILE WARREN_VOUCHER)
+read_secret MNEMONIC WARREN_MNEMONIC_FILE WARREN_MNEMONIC
+read_secret VOUCHER WARREN_VOUCHER_FILE WARREN_VOUCHER
 strip_secrets_from_environment
 
 # Checked before anything is started: an operator typo costs a second and a
