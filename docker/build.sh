@@ -78,6 +78,15 @@ warren_build_args() { # <channel> <version> <tag> [local]
 		"$1" "$2" "$3"
 }
 
+# What an operator is left with when the releases cannot be listed. There is
+# no version to bake into the image then, and the two ways out (pin one, or
+# authenticate the read so it stops being rationed) are worth more to them
+# than the HTTP status the build died on.
+warren_resolve_failure() { # warren_resolve_failure <channel>
+	printf 'cannot list the %s daemon releases of %s\n' "$1" "$REPO"
+	printf 'pin one with --version <x.y.z>, or set GH_TOKEN or GITHUB_TOKEN to a token that can read that repository (an authenticated gh works too)\n'
+}
+
 # Sourced by the unit tests, which want the functions and nothing else.
 if [ "${WARREN_BUILD_LIB:-0}" = "1" ]; then
 	return 0 2> /dev/null || exit 0
@@ -115,10 +124,10 @@ fi
 
 if [ -z "$LOCAL" ] && [ -z "$VERSION" ]; then
 	echo "resolving the latest $CHANNEL daemon release"
-	VERSION="$(curl -fsSL 'https://api.github.com/repos/WarrenBrowse/warren-cli/releases?per_page=100' \
-		| grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4 \
-		| warren_version_from_tags "$CHANNEL")" \
-		|| { echo "no $CHANNEL daemon release found" >&2; exit 1; }
+	TAGS="$(warren_release_tags "$REPO")" \
+		|| { warren_resolve_failure "$CHANNEL" >&2; exit 1; }
+	VERSION="$(printf '%s\n' "$TAGS" | warren_version_from_tags "$CHANNEL")" \
+		|| { echo "no $CHANNEL daemon release found in $REPO" >&2; exit 1; }
 fi
 
 if [ -n "$LOCAL" ]; then

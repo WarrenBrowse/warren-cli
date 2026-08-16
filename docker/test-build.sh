@@ -105,5 +105,46 @@ check_fails "two candidates are refused rather than guessed" \
 check_contains "and the refusal names them" "1.2.0_arm64.deb" \
 	"$(warren_local_deb "$LOCAL_DIR" arm64 2>&1 || true)"
 
+echo "resolving a version against the releases API"
+# The documented `./docker/build.sh -t ...` died on an empty version whenever
+# the API refused: the read was anonymous, unconditionally, and an anonymous
+# read is rationed to 60 requests an hour per source IP (a VPN exit, or an
+# office, is one address for all of it). Two agents ended up pinning the
+# version by hand. curl and gh are stubbed here, so nothing below touches the
+# network.
+STUBS="$(mktemp -d)"
+trap 'rm -rf "$LOCAL_DIR" "$STUBS"' EXIT INT TERM
+cat > "$STUBS/curl" << EOF
+#!/bin/sh
+[ -f "$STUBS/curl-refuses" ] && exit 22
+printf '{"tag_name": "daemon-beta-v1.9.1"}\n{"tag_name": "daemon-beta-v1.11.0"}\n{"tag_name": "daemon-v1.2.1"}\n'
+EOF
+cat > "$STUBS/gh" << 'EOF'
+#!/bin/sh
+[ "$1" = auth ] && exit 1
+exit 1
+EOF
+chmod +x "$STUBS/curl" "$STUBS/gh"
+PATH="$STUBS:$PATH"
+
+check "the newest release of the channel is what the build pins" \
+	"1.11.0" "$(warren_release_tags "$REPO" | warren_version_from_tags beta)"
+check "and the other channel resolves its own series" \
+	"1.2.1" "$(warren_release_tags "$REPO" | warren_version_from_tags prod)"
+
+: > "$STUBS/curl-refuses"
+check_fails "an API that refuses stops the build rather than resolving nothing" \
+	warren_release_tags "$REPO"
+rm -f "$STUBS/curl-refuses"
+
+# What the operator is left with when it refuses: two agents had to read the
+# script to find out that --version exists.
+check_contains "the refusal offers the version pin" "--version" \
+	"$(warren_resolve_failure beta)"
+check_contains "and names the token variable to set" "GH_TOKEN" \
+	"$(warren_resolve_failure beta)"
+check_contains "and its alternative" "GITHUB_TOKEN" \
+	"$(warren_resolve_failure beta)"
+
 printf '\n%d checks, %d failure(s)\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]

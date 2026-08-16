@@ -45,6 +45,17 @@ check_fails() { # check_fails <description> <command...>
 	fi
 }
 
+check_contains() { # check_contains <description> <needle> <haystack>
+	checks=$((checks + 1))
+	case "$3" in
+	*"$2"*) printf '  ok   %s\n' "$1" ;;
+	*)
+		printf '  FAIL %s\n       expected to contain: %s\n       actual: %s\n' "$1" "$2" "$3"
+		failures=$((failures + 1))
+		;;
+	esac
+}
+
 echo "tag series"
 check "prod tags carry the bare prefix" \
 	"daemon-v" "$(warren_tag_prefix prod)"
@@ -105,6 +116,61 @@ check "the beta prefix never matches a prod tag" \
 check "an empty series resolves to nothing rather than to the other one" \
 	"" \
 	"$(printf 'daemon-beta-v1.1.14\n' | warren_latest_tag daemon-v)"
+
+echo "listing the releases"
+# Both the installer and docker/build.sh ask GitHub which releases exist, and
+# an anonymous read is rationed to 60 requests an hour per source IP, so it
+# answers 403 once that is spent. That has to be a failure with something to
+# act on, not an empty listing that reads as "this channel has no release",
+# and a token in the environment has to be used when there is one. curl and gh
+# are stubbed, so nothing here touches the network.
+STUBS="$(mktemp -d)"
+trap 'rm -rf "$STUBS"' EXIT INT TERM
+cat > "$STUBS/curl" << EOF
+#!/bin/sh
+printf '%s\n' "\$*" > "$STUBS/curl-args"
+[ -f "$STUBS/curl-refuses" ] && exit 22
+printf '{"tag_name": "daemon-beta-v1.11.0"}\n{"tag_name": "daemon-v1.2.1"}\n'
+EOF
+cat > "$STUBS/gh" << EOF
+#!/bin/sh
+if [ "\$1" = auth ]; then [ -f "$STUBS/gh-authenticated" ]; exit \$?; fi
+printf '%s\n' "\$*" > "$STUBS/gh-args"
+printf 'daemon-beta-v1.9.1\n'
+EOF
+chmod +x "$STUBS/curl" "$STUBS/gh"
+PATH="$STUBS:$PATH"
+
+tags_with_token() { # tags_with_token <variable> <value>
+	( export "$1=$2"; warren_release_tags WarrenBrowse/warren-cli )
+}
+
+check "every release tag comes out of the API payload" \
+	"daemon-beta-v1.11.0 daemon-v1.2.1" \
+	"$(warren_release_tags WarrenBrowse/warren-cli | tr '\n' ' ' | sed 's/ $//')"
+check_contains "an anonymous read is what a public repo needs" \
+	"api.github.com/repos/WarrenBrowse/warren-cli/releases" "$(cat "$STUBS/curl-args")"
+check "and it carries no authorization it does not have" "0" \
+	"$(grep -c Authorization "$STUBS/curl-args" || true)"
+
+tags_with_token GH_TOKEN stub-token > /dev/null
+check_contains "GH_TOKEN authenticates the read" "Authorization: Bearer stub-token" \
+	"$(cat "$STUBS/curl-args")"
+tags_with_token GITHUB_TOKEN other-stub-token > /dev/null
+check_contains "so does GITHUB_TOKEN" "Authorization: Bearer other-stub-token" \
+	"$(cat "$STUBS/curl-args")"
+
+: > "$STUBS/curl-refuses"
+check_fails "an API that refuses is a failure, not an empty listing" \
+	warren_release_tags WarrenBrowse/warren-cli
+rm -f "$STUBS/curl-refuses"
+
+: > "$STUBS/gh-authenticated"
+check "an authenticated gh answers before the anonymous API, private repo or not" \
+	"daemon-beta-v1.9.1" "$(warren_release_tags WarrenBrowse/warren-cli)"
+check_contains "asking that repository for its releases" \
+	"release list -R WarrenBrowse/warren-cli" "$(cat "$STUBS/gh-args")"
+rm -f "$STUBS/gh-authenticated"
 
 printf '\n%d checks, %d failure(s)\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]

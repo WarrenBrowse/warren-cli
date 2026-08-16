@@ -274,6 +274,12 @@ cp warren-vpn-daemon*_*.deb docker/local-debs/
 ./docker/build.sh --local-deb -t warren-vpn
 ```
 
+Resolving the latest release reads the GitHub releases API. An anonymous read
+is rationed to 60 requests an hour per source IP (a VPN exit or an office is
+one address for everyone behind it), so it can refuse for reasons that have
+nothing to do with this repository. `GH_TOKEN` or `GITHUB_TOKEN`, or a `gh`
+that is already logged in, lifts that; `--version x.y.z` skips the read.
+
 `docker/build.sh` resolves the release version and passes it to the build as
 `--build-arg WARREN_DAEMON_VERSION`, because that is what puts the daemon
 version in Docker's cache key. Resolving "the latest release" from inside the

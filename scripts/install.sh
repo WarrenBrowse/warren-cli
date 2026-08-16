@@ -36,10 +36,10 @@ info() { printf '\033[0;34m[info]\033[0m %s\n' "$*"; }
 warn() { printf '\033[0;33m[warn]\033[0m %s\n' "$*" >&2; }
 
 # ---------------------------------------------------------------------------
-# Resolution. Pure functions: no downloads, no writes, no exits on success.
-# scripts/test-install.sh sources this file and asserts on them, so a rename of
-# a release artifact is caught here rather than by the first user to run the
-# one-liner.
+# Resolution. No writes, no exits on success, and only warren_release_tags
+# talks to the network. scripts/test-install.sh sources this file and asserts
+# on them, so a rename of a release artifact is caught here rather than by the
+# first user to run the one-liner.
 # ---------------------------------------------------------------------------
 
 # Release channel -> the tag prefix of its series on warren-cli.
@@ -132,6 +132,30 @@ warren_format() { # warren_format <os>
 	esac
 }
 
+# Every release tag of the distribution repo, one per line. Shared with
+# docker/build.sh, which resolves the daemon version it bakes into an image
+# through it, so how a read is authenticated is decided in one place.
+#
+# An authenticated gh answers first: it also works while the repo, or a
+# release in it, is private. Otherwise the API is read with GH_TOKEN or
+# GITHUB_TOKEN when one is set, and anonymously when none is. An anonymous
+# read is budgeted at 60 requests an hour per source IP, shared by everyone
+# behind that address, so a 403 arrives often enough to matter. It fails here,
+# so a caller can tell "that channel has no release" from "the API would not
+# say", which is the difference between a bad argument and a busy hour.
+warren_release_tags() { # warren_release_tags <owner/repo>
+	if command -v gh > /dev/null 2>&1 && gh auth status > /dev/null 2>&1; then
+		gh release list -R "$1" --limit 100 --json tagName -q '.[].tagName'
+		return $?
+	fi
+	_token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+	# The read and the parse are two steps because curl's status is the one
+	# that says the API refused; a pipeline would report sed's instead.
+	_releases="$(curl -fsSL ${_token:+-H "Authorization: Bearer $_token"} \
+		"https://api.github.com/repos/$1/releases?per_page=100")" || return 1
+	printf '%s\n' "$_releases" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p'
+}
+
 # Sourced by the test script, which wants the functions and nothing else.
 if [ "${WARREN_INSTALL_LIB:-0}" = "1" ]; then
 	return 0 2> /dev/null || exit 0
@@ -195,9 +219,8 @@ else
 	warren_arch "$RAW_ARCH" "$FORMAT" > /dev/null 2>&1 \
 		|| err "unsupported architecture: $RAW_ARCH (Warren ships x86_64 and aarch64)."
 
-	# The repo is public, so a token-less curl resolves everything. An
-	# authenticated gh, when present, is used first: it also works while a
-	# release is still private.
+	# The download below is authenticated the same way the listing is: an
+	# authenticated gh first, a token from the environment otherwise.
 	GHTOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 	USE_GH=0
 	if command -v gh > /dev/null 2>&1 && gh auth status > /dev/null 2>&1; then USE_GH=1; fi
@@ -208,13 +231,8 @@ else
 		TAG="${PREFIX}${VERSION#v}"
 	else
 		info "resolving the latest $CHANNEL headless release..."
-		if [ "$USE_GH" -eq 1 ]; then
-			TAGS="$(gh release list -R "$REPO" --limit 100 --json tagName -q '.[].tagName' 2> /dev/null)"
-		else
-			TAGS="$(curl -fsSL ${GHTOKEN:+-H "Authorization: Bearer $GHTOKEN"} \
-				"https://api.github.com/repos/$REPO/releases?per_page=100" \
-				| sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')"
-		fi
+		TAGS="$(warren_release_tags "$REPO")" \
+			|| err "cannot list the releases of $REPO. Pin one with VERSION=x.y.z, or set GH_TOKEN or GITHUB_TOKEN to a token that can read that repository."
 		TAG="$(printf '%s\n' "$TAGS" | warren_latest_tag "$PREFIX")"
 	fi
 	[ -n "${TAG:-}" ] || err "no published $CHANNEL headless release found on $REPO."
