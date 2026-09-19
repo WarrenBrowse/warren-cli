@@ -1,0 +1,112 @@
+# Deluge behind Warren with NAT-PMP port forwarding: when the exit grants the
+# public port, the up-command pushes it into Deluge's listen_ports over the
+# web UI's JSON-RPC interface (the gluetun VPN_PORT_FORWARDING_UP_COMMAND
+# pattern), and the entrypoint re-points the forward rule to that same port
+# (WARREN_PORT_FORWARD_MATCH_INTERNAL, on by default) so Deluge listens and
+# announces on the exact port peers can reach. The granted port is also
+# readable at /tmp/warren/forwarded_port inside the warren container.
+#
+# The web UI authenticates with a password alone: put it in a .env file next
+# to this one,
+#
+#   DELUGE_PASS=the-password-you-set-in-the-web-UI
+#
+# The linuxserver image ships the Deluge default, `deluge`. Change it in
+# Preferences, Interface, Password before you expose anything, then fill the
+# .env in. Compose refuses to start without the variable (the `:?` form):
+# unset, it would substitute to an empty string, the login would be refused
+# and the only sign would be one WARNING line under a stack that looks
+# healthy. The password does land in the container environment, where
+# `docker inspect` shows it.
+#
+# The hook makes three or four calls because deluge-web reaches the deluged
+# daemon over a connection of its own, and that connection has to exist
+# before any core.* call means anything. auth.login opens the session (the
+# cookie jar carries it to the calls that follow), and deluge-web never
+# connects to the daemon by itself: web.connect is what the browser calls
+# when someone opens the UI, so in a container nobody has opened, every
+# core.* call comes back "Not connected". The hook therefore asks
+# web.connected and, when that is false, connects to the first host in
+# deluge-web's host list before writing anything.
+#
+# The settings written are the core config keys from Deluge's own
+# preferencesmanager.py
+# (https://github.com/deluge-torrent/deluge/blob/deluge-2.1.1/deluge/core/preferencesmanager.py):
+# `listen_ports` is a [first, last] range, so both ends are the granted port;
+# `random_port` has to go false in the same call because while it is true
+# Deluge listens on a port it picked itself and ignores listen_ports
+# entirely; `upnp` and `natpmp` are Deluge's own mapping attempts, which have
+# no router to ask here and would renegotiate a mapping the exit already
+# owns. set_config applies the keys in the order they are sent, and
+# random_port is what re-reads listen_ports, so listen_ports comes first.
+#
+# The JSON-RPC endpoint answers 200 even when the call failed, with the
+# reason in the response body, so curl -f proves nothing on its own: the
+# grep on a null "error" is what turns a refused write into a failed hook the
+# entrypoint reports.
+#
+# Caveat: Docker replaces the network namespace when it restarts warren, and
+# deluge keeps a handle on the destroyed one: it shows zero peers, with no
+# error, until it is restarted too. depends_on orders the start, it does not
+# follow a restart. After any warren restart, run
+# `docker compose restart deluge`.
+services:
+  warren:
+    image: ghcr.io/warrenbrowse/warren-vpn:beta
+    container_name: warren
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    environment:
+      - WARREN_MNEMONIC_FILE=/run/secrets/warren_mnemonic
+      - WARREN_RELAY_LOCATION=fi
+      - WARREN_PORT_FORWARD_INTERNAL_PORT=6881
+      - WARREN_PORT_FORWARD_PROTOCOL=both
+      # Every leg goes through the same endpoint with the same session, so
+      # the call is a shell function and the flags are written once. The
+      # retry budget is bounded: Deluge starts after warren, but a web UI
+      # that never answers must not hold the hook (the entrypoint kills it at
+      # WARREN_PORT_HOOK_TIMEOUT anyway, defaulting to 30s).
+      - >-
+        WARREN_PORT_FORWARD_UP_COMMAND=rpc() { curl -fsS --retry 5
+        --retry-connrefused --retry-max-time 20 --max-time 10
+        -b /tmp/deluge.cookies -c /tmp/deluge.cookies
+        -H 'Content-Type: application/json' -d "$$1"
+        http://127.0.0.1:8112/json; };
+        rpc '{"method":"auth.login","params":["${DELUGE_PASS:?set DELUGE_PASS in .env}"],"id":1}'
+        | grep -q '"result": *true' &&
+        { rpc '{"method":"web.connected","params":[],"id":2}' | grep -q '"result": *true' ||
+        { hid=$$(rpc '{"method":"web.get_hosts","params":[],"id":3}'
+        | sed -n 's/.*"result": *\[ *\[ *"\([^"]*\)".*/\1/p');
+        rpc '{"method":"web.connect","params":["'"$$hid"'"],"id":4}' > /dev/null; }; } &&
+        rpc '{"method":"core.set_config","params":[{"listen_ports":[{{PORT}},{{PORT}}],"random_port":false,"upnp":false,"natpmp":false}],"id":5}'
+        | grep -q '"error": *null'
+    ports:
+      # Deluge web UI, published through the warren netns owner.
+      - "8112:8112"
+    secrets:
+      - warren_mnemonic
+    restart: unless-stopped
+
+  deluge:
+    image: lscr.io/linuxserver/deluge:latest
+    network_mode: "service:warren"
+    depends_on:
+      warren:
+        condition: service_healthy
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+    volumes:
+      - deluge-config:/config
+      - ./downloads:/downloads
+    restart: unless-stopped
+
+volumes:
+  deluge-config:
+
+secrets:
+  warren_mnemonic:
+    file: ./warren_mnemonic.txt

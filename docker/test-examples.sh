@@ -88,7 +88,12 @@ check('the liveness probe allows a full WARREN_HEALTH_TARGET fetch') do
 end
 
 puts 'compose examples'
-%w[docker-compose.yml docker-compose.qbittorrent.yml].each do |name|
+%w[
+  docker-compose.yml
+  docker-compose.qbittorrent.yml
+  docker-compose.transmission.yml
+  docker-compose.deluge.yml
+].each do |name|
   path = File.join(repo, 'docker/examples', name)
   raw = File.read(path)
   compose = docs(path).first
@@ -105,33 +110,98 @@ puts 'compose examples'
   check("#{name}: the netns restart coupling is spelled out") do
     raw.include?('replaces the network namespace')
   end
+  # A recipe is copied verbatim into someone else's repository, so it carries
+  # the workspace typography rule with it.
+  check("#{name}: neither dash the workspace bans") { !raw.match?(/[\u2013\u2014]/) }
 end
 
-puts 'qbittorrent up-command'
-qbt = docs(File.join(repo, 'docker/examples/docker-compose.qbittorrent.yml')).first
-env = qbt['services']['warren']['environment']
-up = env.find { |e| e.start_with?('WARREN_PORT_FORWARD_UP_COMMAND=') }
+puts 'torrent client up-commands'
+# One recipe per standard client. The up-command is the only thing that makes
+# the client follow the port the exit granted, and every client takes it
+# through a different API, so what is pinned is per-client: the leg that
+# authenticates, the call that writes, and the exact setting names. A typo in
+# any of them is a stack that stays healthy and seeds to nobody.
+#
+# Each recipe also turns the client's own UPnP/NAT-PMP and random-port
+# picking OFF: the exit owns the mapping, and a client that renegotiates it
+# or moves off the granted port undoes the grant it was just handed.
+recipes = [
+  {
+    name: 'docker-compose.qbittorrent.yml',
+    # qBittorrent Web API, POST /api/v2/app/setPreferences.
+    handshake: '/api/v2/auth/login',
+    write: '/api/v2/app/setPreferences',
+    fields: ['"listen_port":{{PORT}}', '"random_port":false', '"upnp":false'],
+    credentials: ['${QBT_USER:?', '${QBT_PASS:?'],
+    headers: []
+  },
+  {
+    name: 'docker-compose.transmission.yml',
+    # Transmission RPC session arguments, rpc-spec.md section 4.1:
+    # https://github.com/transmission/transmission/blob/4.0.6/docs/rpc-spec.md
+    handshake: '"method":"session-get"',
+    write: '"method":"session-set"',
+    fields: [
+      '"peer-port":{{PORT}}',
+      '"peer-port-random-on-start":false',
+      '"port-forwarding-enabled":false'
+    ],
+    credentials: ['${TR_USER:?', '${TR_PASS:?'],
+    # CSRF protection: the first request answers 409 and carries the id to
+    # replay with. Without the replay header every write is a 409 forever.
+    headers: ['X-Transmission-Session-Id']
+  },
+  {
+    name: 'docker-compose.deluge.yml',
+    # Deluge web JSON-RPC, deluge/core/preferencesmanager.py config keys.
+    handshake: '"method":"auth.login"',
+    write: '"method":"core.set_config"',
+    fields: [
+      '"listen_ports":[{{PORT}},{{PORT}}]',
+      '"random_port":false',
+      '"upnp":false',
+      '"natpmp":false'
+    ],
+    credentials: ['${DELUGE_PASS:?'],
+    # deluge/ui/web/json_api.py rejects any other content type outright.
+    headers: ['Content-Type: application/json']
+  }
+]
 
-# Recent qBittorrent authenticates localhost too, and the linuxserver image
-# generates a random WebUI password on first start. Without the login leg the
-# hook gets a 403, the listen port is never pushed, and the only signal is one
-# WARNING line while the container stays healthy.
-check('the hook authenticates before it writes preferences') do
-  !up.nil? && up.index('/api/v2/auth/login') && up.index('/api/v2/app/setPreferences') &&
-    up.index('/api/v2/auth/login') < up.index('/api/v2/app/setPreferences')
-end
-# curl's --retry with the default unlimited --retry-max-time can burn well
-# over ten minutes; the entrypoint kills the hook, but the retry budget is
-# what keeps a slow WebUI from eating the whole hook budget every time.
-check('the retry budget is bounded') { !up.nil? && up.include?('--retry-max-time') }
-# Compose substitutes an unset variable with an empty string and only warns,
-# so a missing .env starts the stack with empty credentials: qBittorrent
-# answers 403, the port is never pushed, and the only signal is one WARNING
-# line under a container that stays healthy. The required-variable syntax
-# refuses to start instead.
-qbt_raw = File.read(File.join(repo, 'docker/examples/docker-compose.qbittorrent.yml'))
-check('the WebUI credentials are required, not defaulted to empty') do
-  qbt_raw.include?('${QBT_USER:?') && qbt_raw.include?('${QBT_PASS:?')
+recipes.each do |recipe|
+  path = File.join(repo, 'docker/examples', recipe[:name])
+  raw = File.read(path)
+  env = docs(path).first['services']['warren']['environment']
+  up = env.find { |e| e.start_with?('WARREN_PORT_FORWARD_UP_COMMAND=') }
+  label = recipe[:name].sub('docker-compose.', '').sub('.yml', '')
+
+  check("#{label}: the grant reaches the client through an up-command") do
+    !up.nil? && up.include?('{{PORT}}')
+  end
+  # Every one of these WebUIs authenticates on localhost too. Without the
+  # login leg the write is refused, the port is never pushed, and the only
+  # signal is one WARNING line while the container stays healthy.
+  check("#{label}: the hook authenticates before it writes") do
+    !up.nil? && up.index(recipe[:handshake]) && up.index(recipe[:write]) &&
+      up.index(recipe[:handshake]) < up.index(recipe[:write])
+  end
+  check("#{label}: the write carries the granted port and pins the settings that fight it") do
+    !up.nil? && recipe[:fields].all? { |f| up.include?(f) }
+  end
+  # curl's --retry with the default unlimited --retry-max-time can burn well
+  # over ten minutes; the entrypoint kills the hook, but the retry budget is
+  # what keeps a slow WebUI from eating the whole hook budget every time.
+  check("#{label}: the retry budget is bounded") { !up.nil? && up.include?('--retry-max-time') }
+  # Compose substitutes an unset variable with an empty string and only warns,
+  # so a missing .env would start the stack with empty credentials: the WebUI
+  # refuses the hook and the container still looks healthy. The
+  # required-variable syntax refuses to start instead.
+  check("#{label}: the credentials are required, not defaulted to empty") do
+    recipe[:credentials].all? { |c| raw.include?(c) }
+  end
+  recipe[:headers].each do |header|
+    check("#{label}: the hook sends #{header}") { !up.nil? && up.include?(header) }
+  end
 end
 
 puts

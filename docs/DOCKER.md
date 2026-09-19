@@ -65,10 +65,33 @@ subscription, no network); use `restart: unless-stopped` and read
 is no window where traffic can bypass a dead kill switch.
 
 Compose examples live in `docker/examples/`:
-[`docker-compose.yml`](../docker/examples/docker-compose.yml) (minimal),
-[`docker-compose.qbittorrent.yml`](../docker/examples/docker-compose.qbittorrent.yml)
-(port forwarding with the up-command hook),
+[`docker-compose.yml`](../docker/examples/docker-compose.yml) (minimal) and
 [`k8s-sidecar.yaml`](../docker/examples/k8s-sidecar.yaml) (Kubernetes).
+
+### Torrent clients
+
+Three recipes push the granted public port into the client that has to
+announce it, each through that client's own API. Copy one, put the WebUI
+credentials in a `.env` beside it, and the client follows every grant and
+re-grant without being touched again.
+
+- [`docker-compose.qbittorrent.yml`](../docker/examples/docker-compose.qbittorrent.yml)
+  sets `listen_port` over the Web API, with `random_port` and `upnp` off.
+- [`docker-compose.transmission.yml`](../docker/examples/docker-compose.transmission.yml)
+  sets `peer-port` over the RPC interface, replaying the CSRF 409 the first
+  request is answered with, and turns `peer-port-random-on-start` and
+  `port-forwarding-enabled` off.
+- [`docker-compose.deluge.yml`](../docker/examples/docker-compose.deluge.yml)
+  sets both ends of `listen_ports` to the granted port over the web UI's
+  JSON-RPC, with `random_port`, `upnp` and `natpmp` off.
+
+All three switch the client's own UPnP/NAT-PMP and random-port picking off:
+the exit owns the mapping, and a client that renegotiates it or wanders off
+the granted port undoes the grant it was just handed. All three also carry
+the same caveat. Docker replaces the network namespace when it restarts
+`warren`, the torrent container keeps a handle on the destroyed one, and it
+then shows zero peers with no error until it is restarted too. After any
+`warren` restart, run `docker compose restart <client>`.
 
 ## Environment reference
 
@@ -131,7 +154,9 @@ subscription fleet-wide, public range 49152-65535). In this image:
 
    Both legs are needed: recent qBittorrent authenticates localhost too. The
    full stack around this snippet is
-   [`docker-compose.qbittorrent.yml`](../docker/examples/docker-compose.qbittorrent.yml).
+   [`docker-compose.qbittorrent.yml`](../docker/examples/docker-compose.qbittorrent.yml),
+   and Transmission and Deluge have their own recipes (Torrent clients,
+   above).
 
 3. With `WARREN_PORT_FORWARD_MATCH_INTERNAL=on` (the default) the forward
    rule is then re-pointed to that same port, so after one convergence step

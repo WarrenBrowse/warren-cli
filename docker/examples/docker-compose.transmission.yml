@@ -1,0 +1,113 @@
+# Transmission behind Warren with NAT-PMP port forwarding: when the exit
+# grants the public port, the up-command pushes it into Transmission's
+# peer-port over the RPC interface (the gluetun VPN_PORT_FORWARDING_UP_COMMAND
+# pattern), and the entrypoint re-points the forward rule to that same port
+# (WARREN_PORT_FORWARD_MATCH_INTERNAL, on by default) so Transmission listens
+# and announces on the exact port peers can reach. The granted port is also
+# readable at /tmp/warren/forwarded_port inside the warren container.
+#
+# The RPC interface authenticates: put the credentials in a .env file next to
+# this one,
+#
+#   TR_USER=admin
+#   TR_PASS=the-password-you-want
+#
+# and they are also what the linuxserver image writes into its settings.json
+# (USER and PASS below), so there is nothing to set in the WebUI first.
+# Compose refuses to start without them (the `:?` form): unset, they would
+# substitute to empty strings, Transmission would answer 401 and the only sign
+# would be one WARNING line under a stack that looks healthy. The credentials
+# do land in the container environment, where `docker inspect` shows them.
+#
+# Transmission guards the RPC endpoint against CSRF, so the hook makes two
+# calls. The first, a session-get, is answered with 409 Conflict and carries
+# the token to replay in its X-Transmission-Session-Id header; the second
+# sends that header and does the work. The first curl therefore runs without
+# -f, which would throw the 409 away along with the header the whole dance is
+# after. Host whitelisting does not fire here: an IP literal is always
+# allowed (rpc-spec.md 2.3.2).
+#
+# The RPC endpoint answers 200 even when the call failed, with the reason in
+# the response body's `result` string, so curl -f proves nothing on its own:
+# the grep on a "success" result is what turns a refused write into a failed
+# hook the entrypoint reports.
+#
+# The three settings written are the Transmission 4.0 session arguments
+# (https://github.com/transmission/transmission/blob/4.0.6/docs/rpc-spec.md,
+# section 4.1 "Session arguments"): `peer-port` is the port to listen on,
+# `peer-port-random-on-start` would move off it at the next restart, and
+# `port-forwarding-enabled` is Transmission's own UPnP/NAT-PMP, which has no
+# router to ask here and would renegotiate a mapping the exit already owns.
+# Transmission 4.1 renamed every RPC string to snake_case and still accepts
+# the kebab-case names used here. The day it stops, this call becomes
+# session_set with peer_port, peer_port_random_on_start and
+# port_forwarding_enabled.
+#
+# Caveat: Docker replaces the network namespace when it restarts warren, and
+# transmission keeps a handle on the destroyed one: it shows zero peers, with
+# no error, until it is restarted too. depends_on orders the start, it does
+# not follow a restart. After any warren restart, run
+# `docker compose restart transmission`.
+services:
+  warren:
+    image: ghcr.io/warrenbrowse/warren-vpn:beta
+    container_name: warren
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    environment:
+      - WARREN_MNEMONIC_FILE=/run/secrets/warren_mnemonic
+      - WARREN_RELAY_LOCATION=fi
+      - WARREN_PORT_FORWARD_INTERNAL_PORT=51413
+      - WARREN_PORT_FORWARD_PROTOCOL=both
+      # Take the CSRF token from the 409, then write the port. The retry
+      # budget is bounded: Transmission starts after warren, but an RPC
+      # endpoint that never answers must not hold the hook (the entrypoint
+      # kills it at WARREN_PORT_HOOK_TIMEOUT anyway, defaulting to 30s).
+      # An empty token means the first leg never reached Transmission, so
+      # the guard stops the chain there and the hook reports the failure,
+      # instead of sending an empty header the endpoint answers 409 to.
+      - >-
+        WARREN_PORT_FORWARD_UP_COMMAND=sid=$$(curl -sSi --retry 5
+        --retry-connrefused --retry-max-time 20 --max-time 10
+        -u '${TR_USER:?set TR_USER in .env}:${TR_PASS:?set TR_PASS in .env}'
+        -d '{"method":"session-get"}' http://127.0.0.1:9091/transmission/rpc
+        | tr -d '\r' | sed -n 's/^[Xx]-[Tt]ransmission-[Ss]ession-[Ii]d: *//p');
+        [ -n "$$sid" ] && curl -fsS --max-time 10
+        -u '${TR_USER:?set TR_USER in .env}:${TR_PASS:?set TR_PASS in .env}'
+        -H "X-Transmission-Session-Id: $$sid"
+        -d '{"method":"session-set","arguments":{"peer-port":{{PORT}},"peer-port-random-on-start":false,"port-forwarding-enabled":false}}'
+        http://127.0.0.1:9091/transmission/rpc | grep -q '"result": *"success"'
+    ports:
+      # Transmission WebUI, published through the warren netns owner.
+      - "9091:9091"
+    secrets:
+      - warren_mnemonic
+    restart: unless-stopped
+
+  transmission:
+    image: lscr.io/linuxserver/transmission:latest
+    network_mode: "service:warren"
+    depends_on:
+      warren:
+        condition: service_healthy
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      # PEERPORT is deliberately unset: it would pin one static peer port,
+      # and the port that works is the one the exit grants.
+      - USER=${TR_USER:?set TR_USER in .env}
+      - PASS=${TR_PASS:?set TR_PASS in .env}
+    volumes:
+      - tr-config:/config
+      - ./downloads:/downloads
+    restart: unless-stopped
+
+volumes:
+  tr-config:
+
+secrets:
+  warren_mnemonic:
+    file: ./warren_mnemonic.txt
