@@ -84,7 +84,16 @@ try {
 
     $keygen = Get-SshKeygenCandidate | Where-Object { Test-SshSigVerifier -Path $_ -WorkDir $root } |
         Select-Object -First 1
-    if (-not $keygen) { throw 'these tests need an ssh-keygen from OpenSSH 8.1 or newer' }
+    if (-not $keygen) {
+        # Say what each candidate answered, so a runner without a usable one
+        # can be told apart from a probe that misreads a good one.
+        foreach ($candidate in Get-SshKeygenCandidate) {
+            $answer = Invoke-NativeTool -Path $candidate -StdinPath (Join-Path $root 'probe.good') `
+                -Arguments "-Y verify -f `"$(Join-Path $root 'probe.signers')`" -I probe -n probe -s `"$(Join-Path $root 'probe.sig')`""
+            Write-Host "  $candidate -> $($answer.ExitCode): $($answer.Error)"
+        }
+        throw 'these tests need an ssh-keygen from OpenSSH 8.1 or newer'
+    }
 
     function New-Key {
         param([string]$Name)
