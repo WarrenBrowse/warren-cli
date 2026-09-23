@@ -64,3 +64,13 @@ jobs:
       - name: Windows installer proof-of-origin tests
         shell: pwsh
         run: ./windows/test-install-windows.ps1
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Where the installer really runs: Windows PowerShell 5.1, with the
+      # ssh-keygen a stock Windows carries.
+      - name: Windows installer proof-of-origin tests (Windows PowerShell 5.1)
+        shell: powershell
+        run: .\windows\test-install-windows.ps1
