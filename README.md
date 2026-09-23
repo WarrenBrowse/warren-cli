@@ -98,7 +98,8 @@ warren status                         # show tunnel state
 > redeem`. During the free beta they are handed out by the team; once the paid
 > service opens, the web checkout issues them (Lightning / Monero / card, same
 > flow as the desktop app). Restore an existing account on a new machine with
-> `warren warren mnemonic import "<12 words>"`.
+> `warren account login`, which asks for the recovery phrase: typed there, it
+> never reaches the process list or the shell history.
 
 ## Install
 

@@ -20,7 +20,7 @@
 # Create the secret out of band, so no recovery phrase ever lands in a file
 # that gets committed:
 #
-#   printf '%s' "your 12 or 24 word recovery phrase" > warren_mnemonic.txt
+#   (umask 077 && cat > warren_mnemonic.txt)   # paste the phrase, then Ctrl-D
 #   kubectl create secret generic warren-mnemonic \
 #     --from-file=mnemonic=./warren_mnemonic.txt
 #   shred -u warren_mnemonic.txt

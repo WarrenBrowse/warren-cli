@@ -197,7 +197,7 @@ sudo WARREN_RESOURCE_DIR="$PWD/dist-assets" ./target/release/warren-daemon -vv &
 # 1. Create (or restore) an identity
 warren account create
 warren warren mnemonic export                 # back up the 12 words offline!
-# restore instead:  warren warren mnemonic import "word1 word2 ... word12"
+# restore instead:  warren account login     (asks for the 12 words)
 
 # 2. Add credit (buy on the Warren website -> you receive a voucher)
 warren account redeem <VOUCHER>

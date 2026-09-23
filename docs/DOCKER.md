@@ -48,7 +48,9 @@ This section will switch to the direct pull once the package is public.
 ## Quick start
 
 ```bash
-printf '%s' "your 12 or 24 word recovery phrase" > warren_mnemonic.txt
+# Paste the recovery phrase, then Ctrl-D: the file is private to you, and the
+# phrase stays out of your shell history.
+(umask 077 && cat > warren_mnemonic.txt)
 docker run -d --name warren \
   --cap-add NET_ADMIN --device /dev/net/tun \
   -v "$PWD/warren_mnemonic.txt:/run/secrets/warren_mnemonic:ro" \
