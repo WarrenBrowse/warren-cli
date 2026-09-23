@@ -58,3 +58,9 @@ jobs:
           Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
           $issues = Invoke-ScriptAnalyzer -Path windows/ -Severity Error
           if ($issues) { $issues | Format-Table; exit 1 }
+
+      # The Windows installer's proof of origin, against the runner's
+      # ssh-keygen: what it accepts, and every way it must refuse.
+      - name: Windows installer proof-of-origin tests
+        shell: pwsh
+        run: ./windows/test-install-windows.ps1
