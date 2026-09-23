@@ -108,16 +108,33 @@ pyJqQynWwRZHTOSn30ZD4WDA==
 -----END SSH SIGNATURE-----
 '@
 
-# Runs a native tool with its stdin fed from a file, byte for byte. A
-# PowerShell pipeline would re-encode the bytes and add a line ending, and the
-# signature covers the exact file.
+# Runs a native tool with its stdin fed from a file, byte for byte; the
+# signature covers the exact file. On Windows the file itself becomes the
+# tool's stdin (Start-Process hands CreateProcess its handle): a PowerShell
+# pipeline would re-encode the bytes, and a .NET stdin pipe starts with a byte
+# order mark whenever the console runs in UTF-8. Elsewhere, where PowerShell
+# only runs this script's tests, the .NET pipe carries the bytes as they are.
 function Invoke-NativeTool {
     param([string]$Path, [string]$Arguments, [string]$StdinPath)
+    if ($env:OS -eq 'Windows_NT') {
+        $out = [IO.Path]::GetTempFileName()
+        $err = [IO.Path]::GetTempFileName()
+        $in = if ($StdinPath) { $StdinPath } else { [IO.Path]::GetTempFileName() }
+        try {
+            $process = Start-Process -FilePath $Path -ArgumentList $Arguments -NoNewWindow -Wait -PassThru `
+                -RedirectStandardInput $in -RedirectStandardOutput $out -RedirectStandardError $err
+            return [pscustomobject]@{ ExitCode = $process.ExitCode; Error = "$(Get-Content -Raw -LiteralPath $err)$(Get-Content -Raw -LiteralPath $out)" }
+        }
+        catch { return [pscustomobject]@{ ExitCode = -1; Error = "$_" } }
+        finally {
+            Remove-Item -LiteralPath $out, $err -Force -ErrorAction SilentlyContinue
+            if (-not $StdinPath) { Remove-Item -LiteralPath $in -Force -ErrorAction SilentlyContinue }
+        }
+    }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $Path
     $psi.Arguments = $Arguments
     $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
@@ -132,8 +149,8 @@ function Invoke-NativeTool {
         }
     }
     catch {
-        # An unreadable input, or a tool that exits before reading it: the
-        # exit code below is what counts.
+        # An unreadable input, or a tool that exits before reading it: the exit
+        # code below is what counts.
         $null = $_
     }
     finally {
