@@ -196,7 +196,7 @@ try {
     New-Release
     ${function:Get-SshKeygenCandidate} = { @() }
     Test-Refusal 'a machine without ssh-keygen refuses to install' `
-    { Assert-WarrenAsset -Dir $release -Asset $asset } 'Install the OpenSSH client'
+    { Assert-WarrenAsset -Dir $release -Asset $asset } '(OpenSSH 8.1 or newer) on this machine'
 
     # A tool that does everything right except refuse a bad signature: a
     # verifier must prove it can say no.
@@ -212,7 +212,7 @@ try {
     ${function:Get-SshKeygenCandidate} = [scriptblock]::Create("@('$yes')")
     Write-AsciiFile (Join-Path $release $asset) 'tampered'
     Test-Refusal 'a tool that accepts any signature is not a verifier' `
-    { Assert-WarrenAsset -Dir $release -Asset $asset } 'Install the OpenSSH client'
+    { Assert-WarrenAsset -Dir $release -Asset $asset } '(OpenSSH 8.1 or newer) on this machine'
     ${function:Get-SshKeygenCandidate} = $realCandidates
 }
 finally {

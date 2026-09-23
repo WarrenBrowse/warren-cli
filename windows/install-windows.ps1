@@ -152,12 +152,14 @@ function Write-AsciiFile {
     [IO.File]::WriteAllText($Path, $Text, [Text.Encoding]::ASCII)
 }
 
-# Every ssh-keygen this host might carry: PATH first, then the Windows
-# optional feature (also through Sysnative, for a 32-bit shell on 64-bit
-# Windows), the Win32-OpenSSH package and Git for Windows.
+# Every ssh-keygen this machine might carry, the ones only an administrator
+# can replace first: the Windows optional feature (also through Sysnative,
+# for a 32-bit shell on 64-bit Windows), the Win32-OpenSSH package, Git for
+# Windows (machine-wide, per-user, or wherever its git.exe lives), and PATH
+# last. Git's is often the one recent enough where the Windows client is
+# older than 8.1.
 function Get-SshKeygenCandidate {
-    $candidates = @(Get-Command ssh-keygen -CommandType Application -All -ErrorAction SilentlyContinue |
-        ForEach-Object { $_.Path })
+    $candidates = @()
     if ($env:SystemRoot) {
         $candidates += Join-Path $env:SystemRoot 'System32\OpenSSH\ssh-keygen.exe'
         $candidates += Join-Path $env:SystemRoot 'Sysnative\OpenSSH\ssh-keygen.exe'
@@ -166,6 +168,15 @@ function Get-SshKeygenCandidate {
         $candidates += Join-Path $env:ProgramFiles 'OpenSSH\ssh-keygen.exe'
         $candidates += Join-Path $env:ProgramFiles 'Git\usr\bin\ssh-keygen.exe'
     }
+    if ($env:LOCALAPPDATA) {
+        $candidates += Join-Path $env:LOCALAPPDATA 'Programs\Git\usr\bin\ssh-keygen.exe'
+    }
+    $git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($git) {
+        $candidates += Join-Path (Split-Path (Split-Path $git.Path)) 'usr\bin\ssh-keygen.exe'
+    }
+    $candidates += @(Get-Command ssh-keygen -CommandType Application -All -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.Path })
     return @($candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
         Select-Object -Unique)
 }
@@ -200,16 +211,17 @@ function Assert-SignedChecksumList {
         Select-Object -First 1
     if (-not $verifier) {
         throw ('No ssh-keygen able to verify an SSH signature (OpenSSH 8.1 or newer) on this machine. ' +
-            'Install the OpenSSH client: Settings > System > Optional features > OpenSSH Client, or ' +
-            '"Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0" from an elevated PowerShell, ' +
-            'or Git for Windows; then run this again.')
+            'Git for Windows carries one (winget install Git.Git), and so does the Win32-OpenSSH release ' +
+            '(https://github.com/PowerShell/Win32-OpenSSH/releases); on Windows 11 the OpenSSH Client ' +
+            'optional feature does too (Settings > System > Optional features). Then run this again.')
     }
     $signers = Join-Path $Dir 'release.signers'
     Write-AsciiFile $signers "warren-release $SigningKeySsh`n"
     $result = Invoke-NativeTool -Path $verifier -StdinPath $sums `
         -Arguments "-Y verify -f `"$signers`" -I warren-release -n $SumsDomain -s `"$signature`""
     if ($result.ExitCode -ne 0) {
-        throw "SHA256SUMS does not carry a valid signature by the Warren release key (checked with $verifier)."
+        $detail = @("$($result.Error)" -split "`r?`n" | Where-Object { $_.Trim() })[0]
+        throw "SHA256SUMS does not carry a valid signature by the Warren release key (checked with ${verifier}: $detail)."
     }
 }
 
