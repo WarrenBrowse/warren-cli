@@ -108,8 +108,15 @@ signer produced and warren-app's `ci/test-sign-headless-sums.sh` pins byte for
 byte.
 
 A release published before a signature existed gets one without being rebuilt:
-dispatch warren-app's `sign-cli-release.yml` with its tag. It checks every
-asset against the list, and the list against the assets, before it signs.
+dispatch warren-app's `sign-cli-release.yml` with its tag and the id of the
+warren-app run that published it. It signs only when the release's
+`SHA256SUMS` is the list that run logged, every asset matches it and the
+release carries nothing else; a list anyone could have rewritten since is
+never signed. Actions keeps run logs 90 days, so an older release is rebuilt
+instead.
+
+`finalise` itself signs the checksums the build jobs computed where they
+built, and refuses a draft that does not hold exactly those files.
 
 Rotating the release key moves the pins in both installers before the first
 release signed by the new key.
