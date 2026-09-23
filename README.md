@@ -89,7 +89,7 @@ you have, then read its document.
 warren account create                 # generate identity (BIP39 mnemonic)
 warren warren mnemonic export         # back up the recovery phrase, keep it safe
 # during the free beta, use the voucher you received; purchases open with the paid service
-warren account redeem <VOUCHER>       # add time to the account
+warren account redeem                 # add time: type the voucher when asked
 warren account get                    # show address + expiry
 warren relay list                     # browse available exits
 warren relay set location FR          # pick a country (or: FR Paris)
@@ -98,7 +98,10 @@ warren status                         # show tunnel state
 ```
 
 > Vouchers are how time reaches an account: apply one with `warren account
-> redeem`. During the free beta they are handed out by the team; once the paid
+> redeem`, which asks for the code (a script pipes it in:
+> `printf '%s\n' "$VOUCHER" | warren account redeem`). A code given as an
+> argument is visible to every account on the machine while the command runs,
+> and releases before 1.1.32 accept it only that way. During the free beta they are handed out by the team; once the paid
 > service opens, the web checkout issues them (Lightning / Monero / card, same
 > flow as the desktop app). Restore an existing account on a new machine with
 > `warren account login`, which asks for the recovery phrase: typed there, it

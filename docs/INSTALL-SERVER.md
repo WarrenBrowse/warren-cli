@@ -232,7 +232,8 @@ warren warren mnemonic export                 # back up the 12 words offline!
 # restore instead:  warren account login     (asks for the 12 words)
 
 # 2. Add credit (buy on the Warren website -> you receive a voucher)
-warren account redeem <VOUCHER>
+warren account redeem                         # asks for the voucher code
+# from a script:  printf '%s\n' "$VOUCHER" | warren account redeem
 warren account get                            # address + expiry
 
 # 3. Pick a server and connect

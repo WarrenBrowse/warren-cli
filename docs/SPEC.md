@@ -65,7 +65,8 @@ Three independent components; the CLI and GUI are **both just clients**:
   prod; `warren-cli` packages whatever binary `warren-app` produces and does not
   select the channel itself.
 - **Credit**: buy on the website (Lightning / Monero / card / on-chain) → the
-  backend issues a **voucher** → `warren account redeem <voucher>` extends the
+  backend issues a **voucher** → `warren account redeem` (the code at a prompt
+  or on standard input) extends the
   subscription (`expires_at`). The CLI and the desktop app share this exact flow;
   neither buys in-app.
 - **Discovery**: the daemon fetches and verifies the signed relay list from
@@ -76,7 +77,7 @@ Three independent components; the CLI and GUI are **both just clients**:
 ## 4. Command surface (existing `warren`, abridged)
 
 ```
-account     create | login | logout | get | redeem <voucher>
+account     create | login | logout | get | redeem [voucher]
 warren      mnemonic {export|import} | api-url {get|set|unset} | n-connections {get|set|reset}
 connect | disconnect | reconnect | status [listen]
 relay       list | set location <country> [city] | set custom-list <name> | update
