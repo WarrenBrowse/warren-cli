@@ -187,7 +187,8 @@ function Get-SshKeygenCandidate {
 function Test-SshSigVerifier {
     param([string]$Path, [string]$WorkDir)
     Write-AsciiFile (Join-Path $WorkDir 'probe.signers') "$ProbeSigner`n"
-    Write-AsciiFile (Join-Path $WorkDir 'probe.sig') $ProbeSignature
+    # A checkout with Windows line endings would otherwise break the armor.
+    Write-AsciiFile (Join-Path $WorkDir 'probe.sig') ($ProbeSignature -replace "`r`n", "`n")
     Write-AsciiFile (Join-Path $WorkDir 'probe.good') $ProbeMessage
     Write-AsciiFile (Join-Path $WorkDir 'probe.bad') "$ProbeMessage!"
     $arguments = "-Y verify -f `"$(Join-Path $WorkDir 'probe.signers')`" -I probe -n probe -s `"$(Join-Path $WorkDir 'probe.sig')`""

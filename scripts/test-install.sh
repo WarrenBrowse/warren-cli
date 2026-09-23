@@ -235,7 +235,6 @@ resign() { # resign <dir>, after a case rewrote SHA256SUMS on purpose
 # older than 8.1.
 mkdir "$POO/openssl-ok" "$POO/openssl-none" "$POO/sshsig-none" "$POO/hash-none" \
 	"$POO/openssl-yes" "$POO/sshsig-yes" "$POO/sshsig-refuses-release"
-ln -s "$SIGNER_OPENSSL" "$POO/openssl-ok/openssl"
 printf '#!/bin/sh\necho "Algorithm ed25519 not found" >&2\nexit 1\n' > "$POO/openssl-none/openssl"
 printf '#!/bin/sh\necho "unknown option -- Y" >&2\nexit 1\n' > "$POO/sshsig-none/ssh-keygen"
 printf '#!/bin/sh\nexit 1\n' > "$POO/hash-none/sha256sum"
@@ -260,6 +259,8 @@ case "\$*" in *"-I warren-release"*) exit 1 ;; esac
 exec "$(command -v ssh-keygen)" "\$@"
 EOF
 chmod +x "$POO"/*/*
+# Linked after the chmod above, which would otherwise reach the real binary.
+ln -s "$SIGNER_OPENSSL" "$POO/openssl-ok/openssl"
 OPENSSL_ONLY="$POO/openssl-ok:$POO/sshsig-none"
 SSH_ONLY="$POO/openssl-none"
 NEITHER="$POO/openssl-none:$POO/sshsig-none"
