@@ -132,6 +132,18 @@ warren_format() { # warren_format <os>
 	esac
 }
 
+# curl, carrying GH_TOKEN or GITHUB_TOKEN when one is set. The header travels
+# on stdin as curl configuration: the installer runs as root, and a command
+# line is readable by every account on the host.
+warren_curl() { # warren_curl <curl arguments...>
+	wc_token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+	if [ -n "$wc_token" ]; then
+		printf 'header = "Authorization: Bearer %s"\n' "$wc_token" | curl -K - "$@"
+	else
+		curl "$@"
+	fi
+}
+
 # Every release tag of the distribution repo, one per line. Shared with
 # docker/build.sh, which resolves the daemon version it bakes into an image
 # through it, so how a read is authenticated is decided in one place.
@@ -148,11 +160,10 @@ warren_release_tags() { # warren_release_tags <owner/repo>
 		gh release list -R "$1" --limit 100 --json tagName -q '.[].tagName'
 		return $?
 	fi
-	_token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 	# The read and the parse are two steps because curl's status is the one
 	# that says the API refused; a pipeline would report sed's instead.
-	_releases="$(curl -fsSL ${_token:+-H "Authorization: Bearer $_token"} \
-		"https://api.github.com/repos/$1/releases?per_page=100")" || return 1
+	_releases="$(warren_curl -fsSL "https://api.github.com/repos/$1/releases?per_page=100")" \
+		|| return 1
 	printf '%s\n' "$_releases" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p'
 }
 
@@ -221,7 +232,6 @@ else
 
 	# The download below is authenticated the same way the listing is: an
 	# authenticated gh first, a token from the environment otherwise.
-	GHTOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 	USE_GH=0
 	if command -v gh > /dev/null 2>&1 && gh auth status > /dev/null 2>&1; then USE_GH=1; fi
 
@@ -249,8 +259,7 @@ else
 		if [ "$USE_GH" -eq 1 ]; then
 			gh release download "$TAG" -R "$REPO" -p "$1" -O "$2"
 		else
-			curl -fSL ${GHTOKEN:+-H "Authorization: Bearer $GHTOKEN"} \
-				"https://github.com/$REPO/releases/download/$TAG/$1" -o "$2"
+			warren_curl -fSL "https://github.com/$REPO/releases/download/$TAG/$1" -o "$2"
 		fi
 	}
 

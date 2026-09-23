@@ -131,6 +131,8 @@ trap 'rm -rf "$STUBS"' EXIT INT TERM
 cat > "$STUBS/curl" << EOF
 #!/bin/sh
 printf '%s\n' "\$*" > "$STUBS/curl-args"
+: > "$STUBS/curl-config"
+case "\$*" in *"-K -"*) cat > "$STUBS/curl-config" ;; esac
 [ -f "$STUBS/curl-refuses" ] && exit 22
 printf '{"tag_name": "daemon-beta-v1.11.0"}\n{"tag_name": "daemon-v1.2.1"}\n'
 EOF
@@ -153,14 +155,18 @@ check "every release tag comes out of the API payload" \
 check_contains "an anonymous read is what a public repo needs" \
 	"api.github.com/repos/WarrenBrowse/warren-cli/releases" "$(cat "$STUBS/curl-args")"
 check "and it carries no authorization it does not have" "0" \
-	"$(grep -c Authorization "$STUBS/curl-args" || true)"
+	"$(cat "$STUBS/curl-args" "$STUBS/curl-config" | grep -c Authorization || true)"
 
 tags_with_token GH_TOKEN stub-token > /dev/null
 check_contains "GH_TOKEN authenticates the read" "Authorization: Bearer stub-token" \
-	"$(cat "$STUBS/curl-args")"
+	"$(cat "$STUBS/curl-config")"
+# The installer runs as root, and every account on the host can read its
+# command lines.
+check "without ever appearing on curl's command line" "0" \
+	"$(grep -c stub-token "$STUBS/curl-args" || true)"
 tags_with_token GITHUB_TOKEN other-stub-token > /dev/null
 check_contains "so does GITHUB_TOKEN" "Authorization: Bearer other-stub-token" \
-	"$(cat "$STUBS/curl-args")"
+	"$(cat "$STUBS/curl-config")"
 
 : > "$STUBS/curl-refuses"
 check_fails "an API that refuses is a failure, not an empty listing" \
