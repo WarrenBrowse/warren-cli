@@ -179,9 +179,15 @@ connect_failure() { # <exit status> <timeout seconds>
 }
 
 # The port watcher runs in a background subshell, so the granted port is
-# shared through the status file, never through a shell variable.
+# shared through the status file, never through a shell variable. That file
+# can sit on a volume another container writes, so only a number is read back.
 granted_port() {
-    [ -r "$WARREN_PORT_FORWARD_STATUS_FILE" ] && cat "$WARREN_PORT_FORWARD_STATUS_FILE" || true
+    [ -r "$WARREN_PORT_FORWARD_STATUS_FILE" ] || return 0
+    gp_value="$(cat "$WARREN_PORT_FORWARD_STATUS_FILE")" || return 0
+    case "$gp_value" in
+    '' | *[!0-9]*) return 0 ;;
+    esac
+    printf '%s\n' "$gp_value"
 }
 
 # Run an operator hook under a hard time bound. A hook that never returns
@@ -195,6 +201,13 @@ run_port_hook() {
     hook_cmd="$1"; hook_port="$2"; hook_name="$3"
     hook_budget="${4:-${WARREN_PORT_HOOK_TIMEOUT:-30}}"
     [ -n "$hook_cmd" ] || return 0
+    # The port is substituted into a command run by `sh -c`.
+    case "$hook_port" in
+    '' | *[!0-9]*)
+        log "WARNING: not running the port-forward $hook_name command for a port that is not a number" >&2
+        return 0
+        ;;
+    esac
     resolved=$(printf '%s' "$hook_cmd" | sed "s/{{PORT}}/$hook_port/g")
     log "running port-forward $hook_name command"
     # Own process group where setsid exists (it does in the image), so the

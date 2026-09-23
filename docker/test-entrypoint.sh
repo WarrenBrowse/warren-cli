@@ -287,6 +287,23 @@ check "a listing with no rules yields no identity" \
 echo "port hooks"
 check "an empty hook is a no-op" "" "$(run_port_hook "" 51413 up)"
 
+# The status file can sit on a volume another container writes (the pattern of
+# sharing /tmp/warren with a torrent client), and whatever reaches a hook ends
+# up in `sh -c` as root with NET_ADMIN in the tunnel's namespace.
+foreign_status() { # foreign_status <content>: granted_port over a status file holding it
+	(
+		WARREN_PORT_FORWARD_STATUS_FILE="$TMP/foreign-status"
+		printf '%s\n' "$1" > "$WARREN_PORT_FORWARD_STATUS_FILE"
+		granted_port
+	)
+}
+check "a status file that does not hold a port reads back as no port" "" \
+	"$(foreign_status '1;touch pwned')"
+check "and one that does reads back as that port" "51413" "$(foreign_status 51413)"
+(cd "$TMP" && run_port_hook 'true {{PORT}}' '1;touch pwned' down) > /dev/null 2>&1 || true
+check "a port that is not a number never reaches a hook" "absent" \
+	"$([ -e "$TMP/pwned" ] && echo present || echo absent)"
+
 run_port_hook "printf %s {{PORT}} >$TMP/ran" 51413 up >/dev/null 2>&1
 check "the hook runs with {{PORT}} substituted" "51413" "$(cat "$TMP/ran")"
 
