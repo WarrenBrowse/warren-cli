@@ -35,7 +35,8 @@ URLs answer 404 and the API does not list it).
   `scripts/`, `linux/`, `macos/`, `windows/`, `docker/` and `docs/`.
 - Local check before commit: `git ls-files -z '*.sh' | xargs -0 shellcheck -S warning`,
   `sh scripts/test-install.sh` (needs OpenSSL 3, Homebrew's on macOS, and
-  OpenSSH 8.1), `pwsh windows/test-install-windows.ps1` for anything under
+  OpenSSH 8.1), `bash macos/test-install-macos.sh` for anything under `macos/`
+  or the uninstall path, `pwsh windows/test-install-windows.ps1` for anything under
   `windows/`, and, for anything under `docker/`,
   `sh docker/test-entrypoint.sh`, `sh docker/test-build.sh` and
   `sh docker/test-examples.sh` (none needs an account, a network or docker).

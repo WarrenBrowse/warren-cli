@@ -359,6 +359,58 @@ warren_verify_asset() { # warren_verify_asset <dir> <asset>
 	fi
 }
 
+# The first path, from <path> up to /, that an account other than root (or
+# <uid>, when given) can change, left in WARREN_OFFENDER; true when there is
+# none. The same rule as macos/install-macos.sh, whose test holds both copies
+# to one battery: another account owns it, a group other than gid 0 may write
+# it, everyone may write it without the sticky bit, or an ACL grants a write.
+warren_path_is_private() { # warren_path_is_private <path> [uid]
+	wpp_trusted="${2:-0}"
+	WARREN_OFFENDER="$1"
+	if [ -d "$1" ]; then
+		wpp_path="$(cd -P -- "$1" 2> /dev/null && pwd -P)" || return 1
+	else
+		{ [ -e "$1" ] && [ ! -L "$1" ]; } || return 1
+		wpp_path="$(cd -P -- "$(dirname -- "$1")" 2> /dev/null && pwd -P)" || return 1
+		wpp_path="${wpp_path%/}/$(basename -- "$1")"
+	fi
+	while :; do
+		WARREN_OFFENDER="$wpp_path"
+		wpp_meta="$(ls -ldn -- "$wpp_path" 2> /dev/null)" || return 1
+		wpp_mode="$(printf '%s\n' "$wpp_meta" | awk '{ print $1 }')"
+		wpp_uid="$(printf '%s\n' "$wpp_meta" | awk '{ print $3 }')"
+		wpp_gid="$(printf '%s\n' "$wpp_meta" | awk '{ print $4 }')"
+		case "$wpp_uid" in
+			0 | "$wpp_trusted") ;;
+			*) return 1 ;;
+		esac
+		case "$wpp_mode" in
+			?????w*) [ "$wpp_gid" = 0 ] || return 1 ;;
+		esac
+		case "$wpp_mode" in
+			????????w[tT]*) ;;
+			????????w*) return 1 ;;
+		esac
+		case "$wpp_mode" in
+			??????????+*) return 1 ;;
+		esac
+		# macOS marks an ACL with a '+' only when no extended attribute takes
+		# the '@' slot, so its entries are read instead. A deny entry (the
+		# "everyone deny delete" on every home directory) grants nothing.
+		if [ "$(uname -s)" = Darwin ]; then
+			wpp_acl="$(ls -lnde -- "$wpp_path" 2> /dev/null | sed -n '2,$p')"
+			if printf '%s\n' "$wpp_acl" | grep ' allow ' \
+				| grep -E 'write|append|add_|delete|chown|security' > /dev/null; then
+				return 1
+			fi
+		fi
+		[ "$wpp_path" = / ] && break
+		wpp_path="$(dirname -- "$wpp_path")"
+	done
+	WARREN_OFFENDER=""
+	return 0
+}
+
 # Sourced by the test script, which wants the functions and nothing else.
 if [ "${WARREN_INSTALL_LIB:-0}" = "1" ]; then
 	return 0 2> /dev/null || exit 0
@@ -392,8 +444,16 @@ FORMAT="$(warren_format "$OS")" || err "cannot determine a packaging format for 
 if [ "${1:-}" = "--uninstall" ]; then
 	removed=0
 	if [ "$OS" = Darwin ]; then
-		[ -x /usr/local/share/warren/uninstall.sh ] \
-			&& /usr/local/share/warren/uninstall.sh --uninstall && removed=1
+		# Older releases left the uninstaller under /usr/local, which Homebrew
+		# on Intel Macs hands to the account that installed it, so it runs as
+		# root only from a directory root alone can change.
+		for uninstaller in /opt/warren/uninstall.sh /usr/local/share/warren/uninstall.sh; do
+			[ -f "$uninstaller" ] || continue
+			warren_path_is_private "$uninstaller" \
+				|| err "refusing to run $uninstaller as root: $WARREN_OFFENDER can be changed by an account other than root. Run this installer without --uninstall first: the current release moves the installation to /opt/warren, and removes it from there."
+			"$uninstaller" --uninstall && removed=1
+			break
+		done
 	else
 		if command -v dpkg-query > /dev/null 2>&1 \
 			&& dpkg-query -W -f='${Status}' warren-vpn-daemon 2> /dev/null | grep -q 'ok installed'; then

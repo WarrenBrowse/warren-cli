@@ -28,6 +28,7 @@ service units for the init systems the packages do not cover (`linux/`).
 ```bash
 git ls-files -z '*.sh' | xargs -0 shellcheck -S warning
 sh scripts/test-install.sh
+bash macos/test-install-macos.sh
 # YAML: ruby -ryaml -e "YAML.load_file('.github/workflows/ci.yml')"
 ```
 

@@ -7,14 +7,14 @@
     <string>com.warren.daemon</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/warren-daemon</string>
+        <string>/opt/warren/bin/warren-daemon</string>
         <string>-vv</string>
         <string>--disable-stdout-timestamps</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
         <key>WARREN_RESOURCE_DIR</key>
-        <string>/usr/local/share/warren/resources</string>
+        <string>/opt/warren/resources</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>

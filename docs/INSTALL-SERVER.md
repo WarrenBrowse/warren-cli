@@ -132,9 +132,17 @@ sudo ./install.sh                # binaries + launchd service
 ```
 
 One universal bundle covers Apple Silicon and Intel. Binaries land in
-`/usr/local/bin`, resources in `/usr/local/share/warren/resources`, and the
-daemon runs under launchd (`com.warren.daemon`, logs at
-`/var/log/warren-daemon.log`).
+`/opt/warren/bin` (added to every login shell's `PATH` through
+`/etc/paths.d/warren`, so open a new terminal after installing), resources in
+`/opt/warren/resources`, and the daemon runs under launchd
+(`com.warren.daemon`, logs at `/var/log/warren-daemon.log`).
+
+Nothing the daemon runs or reads lives under `/usr/local`: Homebrew on Intel
+Macs gives that tree to the account that installed it, which could then
+replace a program launchd runs as root. The installer refuses to install into
+a directory, or from an extracted bundle, that an account other than root (or
+the one running `sudo`) can change, and names the directory. Installing a
+release over one that used `/usr/local` moves it and removes the old files.
 
 ### Windows
 

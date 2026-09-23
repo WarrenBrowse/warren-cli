@@ -34,6 +34,11 @@ jobs:
       - name: Installer resolution and proof-of-origin tests
         run: sh scripts/test-install.sh
 
+      # launchd runs the macOS daemon as root, so where it is installed from
+      # and to must be a place no other account can change.
+      - name: macOS installer ownership tests
+        run: bash macos/test-install-macos.sh
+
       # The container glue decides things nothing else checks: which status
       # line is this container's, how long an operator hook may run, whether
       # the daemon version reaches the build as a cache key, and whether the
