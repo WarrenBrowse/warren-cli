@@ -30,7 +30,7 @@ It triggers the same workflow through the same path.
 | `linux-arm64` | self-hosted Linux arm64 | the same three for `arm64` / `aarch64` |
 | `macos` | self-hosted macOS arm64 | `warren-headless[-beta]-<ver>-macos-universal.tar.gz` (both slices, `lipo`-joined) |
 | `windows` | self-hosted Windows | `warren-headless[-beta]-<ver>-windows-x64.zip` |
-| `finalise` | self-hosted Linux x64 | `SHA256SUMS`, and the **published** (non-draft) release |
+| `finalise` | self-hosted Linux x64 | `SHA256SUMS`, its signature `SHA256SUMS.sshsig`, and the **published** (non-draft) release |
 
 The two Linux jobs each build on their own architecture; nothing is
 cross-compiled. Every job publishes to a release in `warren-cli`, not in
@@ -88,6 +88,31 @@ version and is built but never published.
   `warren-cli` for the install assets.
 - `WARREN_CLI_RELEASE_TOKEN`: token with **contents:write** on `warren-cli`,
   used to publish the artifacts and finalise the release there.
+- `WARREN_UPDATE_SIGNING_KEY`: the Warren release key, which also signs the
+  app's update manifests. `finalise` signs `SHA256SUMS` with it
+  (`ci/sign-headless-sums.sh`) and fails without it: the installers refuse a
+  release whose list is not signed, so an unsigned release would install
+  nowhere.
+
+## The signature on SHA256SUMS
+
+`SHA256SUMS` comes from the same release as the packages, so on its own it
+proves only that a download is whole. `SHA256SUMS.sshsig` is what proves Warren
+published it: an SSH signature (namespace `warren-cli-sha256sums/1`) by the
+release key, made by `ssh-keygen -Y sign`. `scripts/install.sh` checks it with
+OpenSSL 3 or `ssh-keygen -Y verify`, `windows/install-windows.ps1` with
+`ssh-keygen.exe`, and the container build the same way before it unpacks a
+.deb. Each pins the public key; `scripts/test-install.sh` asserts the pins are
+that key, and verifies `scripts/testdata/signed-sums`, which the release
+signer produced and warren-app's `ci/test-sign-headless-sums.sh` pins byte for
+byte.
+
+A release published before a signature existed gets one without being rebuilt:
+dispatch warren-app's `sign-cli-release.yml` with its tag. It checks every
+asset against the list, and the list against the assets, before it signs.
+
+Rotating the release key moves the pins in both installers before the first
+release signed by the new key.
 
 Signing/notarization secrets are optional; without them the artifacts are
 unsigned (same posture as the GUI `release.yml`).

@@ -18,6 +18,10 @@
 #     -t warren-vpn .
 # Build from a locally built .deb (drop it in docker/local-debs/ first):
 #   docker build -f docker/Dockerfile --build-arg LOCAL_DEB=1 -t warren-vpn .
+#
+# A downloaded .deb, from a release or from DEB_URL, is unpacked only once the
+# signed SHA256SUMS published beside it vouches for it. A local .deb is the
+# operator's own build and is taken as given.
 
 FROM debian:stable-slim AS unpack
 ARG WARREN_CHANNEL=beta
@@ -25,8 +29,10 @@ ARG WARREN_DAEMON_VERSION=""
 ARG TARGETARCH
 ARG LOCAL_DEB=""
 ARG DEB_URL=""
+# openssl checks the signature on the release's SHA256SUMS before the .deb is
+# unpacked (scripts/install.sh, warren_verify_asset).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && apt-get install -y --no-install-recommends ca-certificates curl openssl \
     && rm -rf /var/lib/apt/lists/*
 COPY scripts/install.sh /warren-install-lib.sh
 COPY docker/build.sh /warren-build-lib.sh
@@ -58,8 +64,15 @@ RUN set -eu; \
         url="https://github.com/WarrenBrowse/warren-cli/releases/download/${prefix}${WARREN_DAEMON_VERSION}/${asset}"; \
       fi; \
       echo "fetching $url"; \
-      deb=/tmp/warren.deb; \
+      release="$(mktemp -d)"; \
+      deb="$release/${url##*/}"; \
       curl -fSL -o "$deb" "$url"; \
+      for proof in SHA256SUMS SHA256SUMS.sshsig; do \
+        curl -fsSL -o "$release/$proof" "${url%/*}/$proof" || rm -f "$release/$proof"; \
+      done; \
+      warren_verify_asset "$release" "${url##*/}" || { \
+        echo "refusing to build from ${url##*/}: nothing proves Warren published it" >&2; \
+        exit 1; }; \
     fi; \
     dpkg-deb -x "$deb" /rootfs; \
     test -x /rootfs/usr/bin/warren-daemon; \

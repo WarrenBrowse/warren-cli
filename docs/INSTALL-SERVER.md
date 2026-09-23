@@ -17,7 +17,8 @@ from source**.
 | `warren-headless-beta-<ver>-linux-x86_64.tar.gz`, `-aarch64.tar.gz` | Arch, Void, Gentoo, Artix, Slackware, NixOS, any other glibc Linux |
 | `warren-headless-beta-<ver>-macos-universal.tar.gz` | macOS, Apple Silicon and Intel |
 | `warren-headless-beta-<ver>-windows-x64.zip` | Windows 10/11 x64 (and ARM64 under emulation) |
-| `SHA256SUMS` | what the installers verify a download against |
+| `SHA256SUMS` | the checksum of every file above |
+| `SHA256SUMS.sshsig` | the signature of `SHA256SUMS` by the Warren release key |
 
 Prod-channel releases carry the same set without the `-beta` token. The channel
 that is live today is **beta**; the production API host is not open yet.
@@ -43,16 +44,39 @@ curl -fsSL https://raw.githubusercontent.com/WarrenBrowse/warren-cli/main/script
 ```
 
 It resolves the newest release of the channel, picks the artifact that fits the
-machine (`.deb`, `.rpm` or the tarball, for this architecture), verifies it
-against the release `SHA256SUMS`, installs binaries, resources, shell
-completions and the service, and starts the daemon.
+machine (`.deb`, `.rpm` or the tarball, for this architecture), checks that the
+release's `SHA256SUMS` carries the Warren release key's signature and that the
+artifact matches it, installs binaries, resources, shell completions and the
+service, and starts the daemon. It refuses to install when any of that cannot
+be proven, including on a machine with neither OpenSSL 3 nor OpenSSH 8.1
+(`ssh-keygen`) to check the signature with: install `openssl` or
+`openssh-client` and run it again.
 
 ```bash
 CHANNEL=prod  … | sudo CHANNEL=prod sh   # the production series, once it opens
 VERSION=1.1.14 … | sudo VERSION=1.1.14 sh  # pin a version
-sudo sh install.sh ./warren-vpn-daemon-beta_1.1.14_amd64.deb   # an already downloaded file
+sudo sh install.sh ./warren-vpn-daemon-beta_1.1.14_amd64.deb   # a file you checked yourself (below)
 sudo sh install.sh --uninstall
 ```
+
+### Checking a download by hand
+
+The installers do this for you. For a file you downloaded yourself, fetch the
+release's `SHA256SUMS` and `SHA256SUMS.sshsig` next to it, then (OpenSSH 8.1 or
+newer):
+
+```bash
+echo 'warren-release ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA9oS7JFrNWmhMRnzMm5K7XaoiUu8S6JpoWDuAbqJWCg' > warren-release.signers
+ssh-keygen -Y verify -f warren-release.signers -I warren-release \
+  -n warren-cli-sha256sums/1 -s SHA256SUMS.sshsig < SHA256SUMS
+grep ' warren-vpn-daemon-beta_<version>_amd64.deb$' SHA256SUMS | sha256sum -c
+# macOS: ... | shasum -a 256 -c
+```
+
+`Good "warren-cli-sha256sums/1" signature for warren-release` and `OK` are the
+two answers to wait for. The
+key is the Warren release key, the one `scripts/install.sh` pins; take it from
+this repository, never from the release you are checking.
 
 ### By hand, Debian / Ubuntu
 

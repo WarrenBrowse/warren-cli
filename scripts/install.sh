@@ -1,8 +1,9 @@
 #!/usr/bin/env sh
 #
 # Warren headless installer: resolves the right artifact for this machine from
-# the warren-cli GitHub releases, verifies it against the release's SHA256SUMS
-# and installs it (daemon + CLI, no GUI).
+# the warren-cli GitHub releases, verifies it against the release's signed
+# SHA256SUMS and installs it (daemon + CLI, no GUI). It needs OpenSSL 3.0 or
+# OpenSSH 8.1 to check the signature, and refuses to install without either.
 #
 #   curl -fsSL https://raw.githubusercontent.com/WarrenBrowse/warren-cli/main/scripts/install.sh | sudo sh
 #
@@ -167,6 +168,197 @@ warren_release_tags() { # warren_release_tags <owner/repo>
 	printf '%s\n' "$_releases" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p'
 }
 
+# ---------------------------------------------------------------------------
+# Proof of origin. SHA256SUMS comes from the same release as the package, so on
+# its own it only proves the download is whole; anyone able to publish the
+# package could publish a matching list. The list is therefore signed with the
+# Warren release key (the Ed25519 key that also signs the desktop app's
+# updates, kept offline), and nothing installs unless that signature verifies
+# against the key pinned below.
+#
+# The signature is SHA256SUMS.sshsig, an SSH signature (PROTOCOL.sshsig) in
+# namespace WARREN_SUMS_DOMAIN, made in the release pipeline by
+# `ssh-keygen -Y sign` (warren-app ci/sign-headless-sums.sh). Two stock tools
+# can check it, and the first one this host can run is used:
+#
+#   openssl     3.0 or newer: rebuilds the bytes an SSH signature covers and
+#               verifies the Ed25519 signature inside it
+#   ssh-keygen  OpenSSH 8.1 or newer: `ssh-keygen -Y verify` (macOS, whose
+#               LibreSSL has no Ed25519, and Debian 11 or Ubuntu 20.04, whose
+#               OpenSSL 1.1.1 cannot verify a raw Ed25519 message)
+#
+# The namespace binds the signature to this purpose: the same key's signature
+# over anything else (an app update manifest) never passes for a checksum list.
+# ---------------------------------------------------------------------------
+
+WARREN_SUMS_DOMAIN='warren-cli-sha256sums/1'
+# The same public key twice, in the form each verifier reads. Its canonical
+# hex form is the line in warren-app's
+# mullvad-update/warren-trusted-metadata-signing-pubkeys; test-install.sh
+# asserts both of these decode to it.
+WARREN_SIGNING_KEY_PEM='-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAD2hLskWs1aaExGfMybkrtdqiJS7xLommhYO4BuolYKA=
+-----END PUBLIC KEY-----'
+WARREN_SIGNING_KEY_SSH='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA9oS7JFrNWmhMRnzMm5K7XaoiUu8S6JpoWDuAbqJWCg'
+
+# True when this host's openssl verifies an Ed25519 signature over a message.
+# Probed rather than read off a version string, since LibreSSL answers
+# `openssl version` too, and the probe demands a refusal as well as an
+# acceptance: a tool that says yes to everything must never become the
+# verifier.
+warren_openssl_ed25519() {
+	command -v openssl > /dev/null 2>&1 || return 1
+	woe_dir="$(mktemp -d)" || return 1
+	woe_status=1
+	if openssl genpkey -algorithm ed25519 -out "$woe_dir/key" > /dev/null 2>&1 \
+		&& openssl pkey -in "$woe_dir/key" -pubout -out "$woe_dir/pub" > /dev/null 2>&1 \
+		&& printf 'probe' > "$woe_dir/good" \
+		&& printf 'probf' > "$woe_dir/bad" \
+		&& openssl pkeyutl -sign -inkey "$woe_dir/key" -rawin \
+			-in "$woe_dir/good" -out "$woe_dir/sig" > /dev/null 2>&1 \
+		&& openssl pkeyutl -verify -pubin -inkey "$woe_dir/pub" -rawin \
+			-in "$woe_dir/good" -sigfile "$woe_dir/sig" > /dev/null 2>&1 \
+		&& ! openssl pkeyutl -verify -pubin -inkey "$woe_dir/pub" -rawin \
+			-in "$woe_dir/bad" -sigfile "$woe_dir/sig" > /dev/null 2>&1; then
+		woe_status=0
+	fi
+	rm -rf "$woe_dir"
+	return "$woe_status"
+}
+
+# True when this host's ssh-keygen verifies SSH signatures (OpenSSH >= 8.1),
+# probed the same way.
+warren_sshsig_capable() {
+	command -v ssh-keygen > /dev/null 2>&1 || return 1
+	wsc_dir="$(mktemp -d)" || return 1
+	wsc_status=1
+	if ssh-keygen -q -t ed25519 -N '' -C probe -f "$wsc_dir/key" > /dev/null 2>&1 \
+		&& printf 'probe' > "$wsc_dir/good" \
+		&& ssh-keygen -q -Y sign -f "$wsc_dir/key" -n probe "$wsc_dir/good" > /dev/null 2>&1 \
+		&& wsc_pub="$(cat "$wsc_dir/key.pub")" \
+		&& printf 'probe %s\n' "$wsc_pub" > "$wsc_dir/signers" \
+		&& ssh-keygen -Y verify -f "$wsc_dir/signers" -I probe -n probe \
+			-s "$wsc_dir/good.sig" < "$wsc_dir/good" > /dev/null 2>&1 \
+		&& ! printf 'probf' | ssh-keygen -Y verify -f "$wsc_dir/signers" -I probe -n probe \
+			-s "$wsc_dir/good.sig" > /dev/null 2>&1; then
+		wsc_status=0
+	fi
+	rm -rf "$wsc_dir"
+	return "$wsc_status"
+}
+
+# Verifies an Ed25519 SSH signature with openssl alone. An SSH signature signs
+# "SSHSIG" + namespace + reserved + hash algorithm + H(message), each field a
+# length-prefixed string, and ends with the 64 signature bytes. Those bytes are
+# checked against a blob rebuilt here from the pinned namespace and the
+# message, never read from the signature file, so nothing in the file can
+# change what is verified.
+warren_openssl_verify_sshsig() { # <message> <sshsig> <public key PEM> <work dir>
+	# shellcheck disable=SC2059 # the format is the length byte, in octal
+	{
+		printf 'SSHSIG\000\000\000'
+		printf "\\$(printf '%03o' "${#WARREN_SUMS_DOMAIN}")"
+		printf '%s' "$WARREN_SUMS_DOMAIN"
+		printf '\000\000\000\000\000\000\000\006sha512\000\000\000\100'
+		openssl dgst -sha512 -binary < "$1"
+	} > "$4/signed" || return 1
+	sed '/^-----/d' "$2" | tr -d '\r\n' | openssl base64 -d -A > "$4/sshsig.bin" || return 1
+	tail -c 64 "$4/sshsig.bin" > "$4/signature" || return 1
+	openssl pkeyutl -verify -pubin -inkey "$3" -rawin \
+		-in "$4/signed" -sigfile "$4/signature" > /dev/null 2>&1
+}
+
+# Verifies <dir>/SHA256SUMS against <dir>/SHA256SUMS.sshsig and the pinned key
+# with the first verifier this host can run, openssl first. Says why on stderr
+# when it refuses.
+#
+# Every step is checked explicitly rather than left to `set -e`, which a
+# caller's `||` switches off inside the function.
+warren_verify_sums() { # warren_verify_sums <dir>
+	wvs_dir="$1"
+	if [ ! -s "$wvs_dir/SHA256SUMS" ]; then
+		echo "the release carries no SHA256SUMS" >&2
+		return 1
+	fi
+	if [ ! -s "$wvs_dir/SHA256SUMS.sshsig" ]; then
+		echo "the release carries no SHA256SUMS.sshsig, so nothing proves Warren published it" >&2
+		return 1
+	fi
+	if warren_openssl_ed25519; then
+		wvs_tool=openssl
+	elif warren_sshsig_capable; then
+		wvs_tool=ssh-keygen
+	else
+		echo "this host cannot verify an Ed25519 signature: install OpenSSL 3.0 or newer (package openssl) or OpenSSH 8.1 or newer (package openssh-client), then run this again" >&2
+		return 1
+	fi
+	wvs_tmp="$(mktemp -d)" || return 1
+	wvs_status=1
+	if [ "$wvs_tool" = openssl ]; then
+		if printf '%s\n' "$WARREN_SIGNING_KEY_PEM" > "$wvs_tmp/key.pem" \
+			&& warren_openssl_verify_sshsig "$wvs_dir/SHA256SUMS" "$wvs_dir/SHA256SUMS.sshsig" \
+				"$wvs_tmp/key.pem" "$wvs_tmp"; then
+			wvs_status=0
+		fi
+	else
+		if printf 'warren-release %s\n' "$WARREN_SIGNING_KEY_SSH" > "$wvs_tmp/signers" \
+			&& ssh-keygen -Y verify -f "$wvs_tmp/signers" -I warren-release -n "$WARREN_SUMS_DOMAIN" \
+				-s "$wvs_dir/SHA256SUMS.sshsig" < "$wvs_dir/SHA256SUMS" > /dev/null 2>&1; then
+			wvs_status=0
+		fi
+	fi
+	rm -rf "$wvs_tmp"
+	[ "$wvs_status" -eq 0 ] \
+		|| echo "SHA256SUMS does not carry a valid signature by the Warren release key (checked with $wvs_tool)" >&2
+	return "$wvs_status"
+}
+
+# The one sha256 the list gives for <asset>, lowercase. No entry, several, or a
+# malformed one is a refusal: the signed list is the statement of what the
+# release contains, and a file it does not vouch for exactly once is not in it.
+warren_sums_entry() { # warren_sums_entry <SHA256SUMS> <asset>
+	wse_hash="$(awk -v a="$2" '$2 == a || $2 == "*" a { print $1 }' "$1")" || return 1
+	case "$wse_hash" in
+		"" | *[!0-9a-fA-F]*) return 1 ;;
+	esac
+	[ "${#wse_hash}" -eq 64 ] || return 1
+	printf '%s\n' "$wse_hash" | tr 'A-F' 'a-f'
+}
+
+# The sha256 of <file>, lowercase, from whichever tool this host has.
+warren_sha256() { # warren_sha256 <file>
+	for ws_tool in sha256sum "shasum -a 256" "openssl dgst -sha256 -r"; do
+		# shellcheck disable=SC2086 # the tool carries its own arguments
+		ws_out="$($ws_tool "$1" 2> /dev/null)" || continue
+		ws_hash="${ws_out%% *}"
+		case "$ws_hash" in
+			"" | *[!0-9a-fA-F]*) continue ;;
+		esac
+		[ "${#ws_hash}" -eq 64 ] || continue
+		printf '%s\n' "$ws_hash" | tr 'A-F' 'a-f'
+		return 0
+	done
+	return 1
+}
+
+# The whole proof for one downloaded file: <dir> holds <asset> and whatever of
+# SHA256SUMS and SHA256SUMS.sshsig the release carried.
+warren_verify_asset() { # warren_verify_asset <dir> <asset>
+	warren_verify_sums "$1" || return 1
+	if ! wva_want="$(warren_sums_entry "$1/SHA256SUMS" "$2")"; then
+		echo "the signed SHA256SUMS does not list $2 exactly once" >&2
+		return 1
+	fi
+	if ! wva_got="$(warren_sha256 "$1/$2")"; then
+		echo "no sha256sum, shasum or openssl on this host to checksum $2" >&2
+		return 1
+	fi
+	if [ "$wva_got" != "$wva_want" ]; then
+		echo "checksum mismatch: $2 is not the file the signed SHA256SUMS lists" >&2
+		return 1
+	fi
+}
+
 # Sourced by the test script, which wants the functions and nothing else.
 if [ "${WARREN_INSTALL_LIB:-0}" = "1" ]; then
 	return 0 2> /dev/null || exit 0
@@ -217,6 +409,7 @@ if [ "${1:-}" = "--uninstall" ]; then
 fi
 
 # --- a package supplied on the command line --------------------------------
+# The operator vouches for this file; nothing here can say where it came from.
 if [ "$#" -ge 1 ] && [ -f "$1" ]; then
 	PKG_FILE="$1"
 	case "$PKG_FILE" in
@@ -225,6 +418,7 @@ if [ "$#" -ge 1 ] && [ -f "$1" ]; then
 		*.tar.gz) FORMAT=tar ;;
 		*) err "unrecognised package: $PKG_FILE (expected .deb, .rpm or .tar.gz)" ;;
 	esac
+	warn "installing $PKG_FILE as given: its origin is not verified."
 else
 	RAW_ARCH="$(uname -m)"
 	warren_arch "$RAW_ARCH" "$FORMAT" > /dev/null 2>&1 \
@@ -266,29 +460,14 @@ else
 	info "downloading $ASSET ($TAG)"
 	download "$ASSET" "$PKG_FILE" || err "download failed for $ASSET in $TAG."
 
-	# The artifact is fetched over TLS from GitHub, so the checksum is not the
-	# only thing standing between the user and a bad file; it is what catches a
-	# truncated download, which otherwise installs as a corrupt package.
-	if download SHA256SUMS "$WORK/SHA256SUMS" 2> /dev/null; then
-		expected="$(awk -v a="$ASSET" '$2 == a || $2 == "*" a { print $1 }' "$WORK/SHA256SUMS")"
-		if [ -n "$expected" ]; then
-			if command -v sha256sum > /dev/null 2>&1; then
-				actual="$(sha256sum "$PKG_FILE" | awk '{print $1}')"
-			elif command -v shasum > /dev/null 2>&1; then
-				actual="$(shasum -a 256 "$PKG_FILE" | awk '{print $1}')"
-			else
-				actual=""
-				warn "no sha256sum or shasum on this host; skipping the checksum check."
-			fi
-			[ -z "$actual" ] || [ "$actual" = "$expected" ] \
-				|| err "checksum mismatch for $ASSET (expected $expected, got $actual)."
-			[ -z "$actual" ] || info "checksum verified."
-		else
-			warn "$ASSET is not listed in SHA256SUMS; skipping the checksum check."
-		fi
-	else
-		warn "no SHA256SUMS in $TAG; skipping the checksum check."
-	fi
+	# A file the release does not carry stays absent, and warren_verify_asset
+	# names it when it refuses.
+	for proof in SHA256SUMS SHA256SUMS.sshsig; do
+		download "$proof" "$WORK/$proof" > /dev/null 2>&1 || rm -f "$WORK/$proof"
+	done
+	warren_verify_asset "$WORK" "$ASSET" \
+		|| err "refusing to install $ASSET from $TAG: nothing proves Warren published it."
+	info "signature and checksum verified."
 fi
 
 # --- install ---------------------------------------------------------------

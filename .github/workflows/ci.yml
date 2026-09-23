@@ -26,9 +26,12 @@ jobs:
 
       # The installer's whole job is to name the one artifact that fits the
       # machine in front of it, out of conventions owned by the release
-      # pipeline. A rename there turns into a 404 on someone else's server, so
-      # the conventions are pinned here rather than reviewed by eye.
-      - name: Installer resolution tests
+      # pipeline, and to install it only once the release's signed SHA256SUMS
+      # vouches for it. A rename there turns into a 404 on someone else's
+      # server, and a hole in the verification into root on every machine that
+      # runs the one-liner, so both are pinned here rather than reviewed by
+      # eye. The runner's OpenSSL 3 and OpenSSH exercise both verifier paths.
+      - name: Installer resolution and proof-of-origin tests
         run: sh scripts/test-install.sh
 
       # The container glue decides things nothing else checks: which status

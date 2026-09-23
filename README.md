@@ -66,8 +66,11 @@ The one-liner reads the host and picks for you. What is **not** covered: musl
 systems (Alpine and derivatives), which the installer refuses with a reason
 rather than a loader error, and 32-bit ARM and riscv64, which are not published.
 
-Every artifact is checksummed in the release's `SHA256SUMS`, and every installer
-verifies against it.
+Every release carries `SHA256SUMS` and `SHA256SUMS.sshsig`, the signature of
+that list by the Warren release key. The one-line installers refuse anything
+the signature does not vouch for, and check it with OpenSSL 3 or with
+`ssh-keygen` from OpenSSH 8.1, whichever the machine has. To check a download
+by hand, see [`docs/INSTALL-SERVER.md`](docs/INSTALL-SERVER.md).
 
 ## Beyond the desktop
 
@@ -168,7 +171,8 @@ See [`docs/RELEASE.md`](docs/RELEASE.md).
 ## Status
 
 - ✅ `warren` + `warren-daemon` build standalone (no Electron) and run, validated.
-- ✅ Every artifact is checksummed and every installer verifies it.
+- ✅ Every release's `SHA256SUMS` is signed, and the one-line installers verify
+  that signature and the checksum before installing anything.
 - ✅ Linux `.deb` / `.rpm` / generic tarball, macOS universal tarball, Windows zip.
 - ✅ Linux service wiring for systemd, OpenRC and sysvinit.
 - ✅ Docker image `ghcr.io/warrenbrowse/warren-vpn` (kill switch, port-forward

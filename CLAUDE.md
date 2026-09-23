@@ -34,13 +34,23 @@ URLs answer 404 and the API does not list it).
   changes per the where-to-edit table in `CONTRIBUTING.md`; this repo owns only
   `scripts/`, `linux/`, `macos/`, `windows/`, `docker/` and `docs/`.
 - Local check before commit: `git ls-files -z '*.sh' | xargs -0 shellcheck -S warning`,
-  `sh scripts/test-install.sh`, and, for anything under `docker/`,
+  `sh scripts/test-install.sh` (needs OpenSSL 3, Homebrew's on macOS, and
+  OpenSSH 8.1), `pwsh windows/test-install-windows.ps1` for anything under
+  `windows/`, and, for anything under `docker/`,
   `sh docker/test-entrypoint.sh`, `sh docker/test-build.sh` and
   `sh docker/test-examples.sh` (none needs an account, a network or docker).
   CI (`.github/workflows/ci.yml`) runs all of them
   plus PSScriptAnalyzer on `windows/`, and builds nothing;
   `.github/workflows/docker.yml` builds and publishes the container image from
   the released .deb (docs/DOCKER.md).
+- **Nothing installs without proof of origin.** Every installer and the
+  container build refuse a download unless the release's `SHA256SUMS` carries
+  the Warren release key's signature (`SHA256SUMS.sshsig`) and the file matches
+  it; a missing signature, entry, hash tool or verifier is a refusal, never a
+  warning. The key is pinned in the scripts and only the library mode of the
+  tests can replace it. `scripts/install.sh` is served live from `main`, so a
+  change to what a release must carry lands only after the releases it resolves
+  carry it (`docs/RELEASE.md`, "The signature on SHA256SUMS").
 - The installer resolves an artifact NAME out of conventions owned by the
   release pipeline in warren-app. Change one side and the other 404s on
   someone else's server, so both halves are pinned by `scripts/test-install.sh`;
