@@ -603,9 +603,9 @@ fi
 MNEMONIC=""
 
 if [ -n "$VOUCHER" ]; then
-    # The CLI takes the code as an argument (no stdin path, unlike login), so
-    # it is visible in /proc for the length of the call. Documented in
-    # docs/DOCKER.md rather than worked around here.
+    # The CLI this image packages (up to 1.1.31) takes the code only as an
+    # argument, so it is visible in /proc for the length of the call. The next
+    # release reads it from stdin; docs/DOCKER.md says when this changes.
     if warren_cli account redeem "$VOUCHER" >/dev/null 2>&1; then
         log "voucher redeemed"
     else
