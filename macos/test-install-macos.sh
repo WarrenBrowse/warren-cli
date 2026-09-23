@@ -150,11 +150,63 @@ case "$PREFIX/" in
 	*) ok "the prefix is outside Homebrew's" ;;
 esac
 
+# The old layout goes only where it really is: a legacy directory that is a
+# symbolic link could send root's rm into the new installation or elsewhere.
+L="$TMP/legacy"
+mkdir -p "$L/share/warren" "$L/bin" "$L/elsewhere"
+printf 'old\n' > "$L/bin/warren-daemon"
+printf 'keep\n' > "$L/elsewhere/warren-daemon"
+LEGACY_SHARE_DIR="$L/share/warren" LEGACY_BIN_DIR="$L/bin" remove_legacy_layout
+if [ ! -e "$L/bin/warren-daemon" ] && [ ! -e "$L/share/warren" ]; then
+	ok "the old layout is removed"
+else
+	fail "the old layout is removed"
+fi
+mkdir -p "$L/share/warren"
+ln -s "$L/elsewhere" "$L/bin-link"
+LEGACY_SHARE_DIR="$L/share/warren" LEGACY_BIN_DIR="$L/bin-link" remove_legacy_layout
+if [ -e "$L/elsewhere/warren-daemon" ]; then
+	ok "but never through a legacy directory that is a symbolic link"
+else
+	fail "but never through a legacy directory that is a symbolic link"
+fi
+
+# Run as root, the installer must resolve nothing through the caller's PATH:
+# Homebrew puts directories another account owns in front of it.
+if [ "$(head -n 1 "$SCRIPT_DIR/install-macos.sh")" = '#!/bin/bash' ]; then
+	ok "the installer names its shell by absolute path"
+else
+	fail "the installer names its shell by absolute path"
+fi
+if [ "$(id -u)" -ne 0 ]; then
+	mkdir -p "$TMP/planted"
+	printf '#!/bin/sh\necho 0\n' > "$TMP/planted/id"
+	printf '#!/bin/sh\necho Darwin\n' > "$TMP/planted/uname"
+	chmod +x "$TMP/planted/id" "$TMP/planted/uname"
+	said="$(env -u WARREN_INSTALL_LIB PATH="$TMP/planted:$PATH" bash "$SCRIPT_DIR/install-macos.sh" 2>&1)"
+	case "$said" in
+		"run with sudo"*) ok "a planted id on the caller's PATH does not pass for root" ;;
+		*) fail "a planted id on the caller's PATH does not pass for root (said: $said)" ;;
+	esac
+fi
+
 echo "scripts/install.sh"
 # shellcheck source=../scripts/install.sh
 . "$REPO_DIR/scripts/install.sh"
 set +e
 battery install-sh
+if [ "$(head -n 1 "$REPO_DIR/scripts/install.sh")" = '#!/bin/sh' ]; then
+	ok "the installer names its shell by absolute path"
+else
+	fail "the installer names its shell by absolute path"
+fi
+if [ "$(uname -s)" = Darwin ] && [ "$(id -u)" -ne 0 ]; then
+	said="$(env -u WARREN_INSTALL_LIB PATH="$TMP/planted:$PATH" sh "$REPO_DIR/scripts/install.sh" --uninstall 2>&1)"
+	case "$said" in
+		*"run as root"*) ok "on macOS, a planted id on the caller's PATH does not pass for root" ;;
+		*) fail "on macOS, a planted id on the caller's PATH does not pass for root (said: $said)" ;;
+	esac
+fi
 
 printf '\n%d checks, %d failure(s)\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]

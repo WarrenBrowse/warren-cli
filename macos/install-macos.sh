@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
 # Install the Warren headless daemon + CLI on macOS from an extracted
 # warren-headless-*-macos-universal bundle. Run from inside that directory:
@@ -101,10 +101,26 @@ warren_tree_is_private() { # warren_tree_is_private <dir> [uid]
     return 0
 }
 
+# The layout of releases that installed under /usr/local, removed and never
+# executed, and only where it really is: a legacy directory another account
+# turned into a symbolic link would point root's rm at the new installation.
+remove_legacy_layout() {
+    [ -d "$LEGACY_SHARE_DIR" ] && [ ! -L "$LEGACY_SHARE_DIR" ] || return 0
+    if [ -d "$LEGACY_BIN_DIR" ] && [ ! -L "$LEGACY_BIN_DIR" ]; then
+        for b in $BINS; do rm -f "$LEGACY_BIN_DIR/$b"; done
+    fi
+    rm -rf "$LEGACY_SHARE_DIR"
+}
+
 # Sourced by macos/test-install-macos.sh, which wants the definitions only.
 if [ "${WARREN_INSTALL_LIB:-0}" = "1" ]; then
     return 0 2> /dev/null || exit 0
 fi
+
+# Nothing below is looked up in the caller's PATH: Homebrew puts directories
+# another account owns in front of it, and this runs as root.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
 
 [ "$(id -u)" -eq 0 ] || {
     echo "run with sudo" >&2
@@ -113,12 +129,6 @@ fi
 [ "$(uname -s)" = "Darwin" ] || {
     echo "macOS only" >&2
     exit 1
-}
-
-remove_legacy_layout() {
-    [ -d "$LEGACY_SHARE_DIR" ] || return 0
-    for b in $BINS; do rm -f "$LEGACY_BIN_DIR/$b"; done
-    rm -rf "$LEGACY_SHARE_DIR"
 }
 
 if [ "${1:-}" = "--uninstall" ]; then
@@ -167,6 +177,8 @@ fi
 # state no longer matches anything on disk.
 launchctl bootout system "$PLIST_DST" 2> /dev/null || true
 
+remove_legacy_layout
+
 echo "Installing binaries to $BIN_DIR ..."
 for b in $BINS; do install -m 0755 -o root -g wheel "bin/$b" "$BIN_DIR/$b"; done
 
@@ -182,8 +194,6 @@ install -m 0755 -o root -g wheel "${BASH_SOURCE[0]}" "$PREFIX/uninstall.sh"
 # The CLI reaches every login shell's PATH through path_helper.
 printf '%s\n' "$BIN_DIR" > "$PATHS_FILE"
 chmod 0644 "$PATHS_FILE"
-
-remove_legacy_layout
 
 echo "Installing shell completions ..."
 install -d "$ZSH_COMPLETION_DIR" "$FISH_COMPLETION_DIR" "$BASH_COMPLETION_DIR"

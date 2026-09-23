@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+#!/bin/sh
 #
 # Warren headless installer: resolves the right artifact for this machine from
 # the warren-cli GitHub releases, verifies it against the release's signed
@@ -419,6 +419,14 @@ fi
 # ---------------------------------------------------------------------------
 # Everything below runs only when this file is executed.
 # ---------------------------------------------------------------------------
+
+# Run as root on macOS, nothing is looked up in the caller's PATH: Homebrew puts
+# directories another account owns in front of it. Linux keeps its PATH, which
+# sudo already sets to root's own directories, and NixOS has no /usr/bin.
+if [ -x /usr/bin/uname ] && [ "$(/usr/bin/uname -s)" = Darwin ]; then
+	PATH=/usr/bin:/bin:/usr/sbin:/sbin
+	export PATH
+fi
 
 OS="$(uname -s)"
 case "$OS" in
