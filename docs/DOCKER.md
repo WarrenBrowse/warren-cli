@@ -100,7 +100,7 @@ then shows zero peers with no error until it is restarted too. After any
 | variable | default | meaning |
 |---|---|---|
 | `WARREN_MNEMONIC_FILE` / `WARREN_MNEMONIC` | | recovery phrase; the file variant wins and is the one to use (a plain env var is visible in `docker inspect`) |
-| `WARREN_VOUCHER_FILE` / `WARREN_VOUCHER` | | voucher redeemed at start; a redeem failure only warns (already-redeemed is normal on restart). The code goes to the CLI as an argument, so it is readable in the container's process list for as long as the redeem runs; the recovery phrase is not (it goes in on stdin). See "The voucher on the command line" below |
+| `WARREN_VOUCHER_FILE` / `WARREN_VOUCHER` | | voucher redeemed at start; a redeem failure only warns (already-redeemed is normal on restart). The code goes to the CLI on standard input, like the recovery phrase, so it never appears in the container's process list |
 | `WARREN_RELAY_LOCATION` | any | exit constraint, passed to `warren relay set location` verbatim (e.g. `fi`, `fi hel`) |
 | `WARREN_LOCKDOWN` | `on` | kill switch (lockdown mode). Leave it on |
 | `WARREN_LAN` | `allow` | local network sharing; sidecars and published ports need it |
@@ -281,15 +281,12 @@ gates nothing but that container.
   target rather than failing, which is why the refusal names the directory and
   says so. `WARREN_VOUCHER_FILE` behaves the same. Check the host path exists
   before the mount, and that the file is not empty.
-- **The voucher on the command line.** The image packages the latest daemon
-  release of its channel, and up to 1.1.31 the `warren` CLI takes a voucher
-  code only as an argument of `warren account redeem`, so the entrypoint passes
-  it that way and the code is readable in `/proc` for the length of the call.
-  The first release after 1.1.31 reads the code from standard input when the
-  argument is left out (warren-app `84840325f9`). Once the image is built from
-  that release, the redeem in `docker/entrypoint.sh` becomes
-  `printf '%s\n' "$VOUCHER" | warren_cli account redeem`, the way the phrase
-  already goes to `account login`, and this note is removed.
+- **An image of a daemon release older than 1.1.32 cannot redeem a voucher.**
+  The entrypoint hands the code to `warren account redeem` on standard input,
+  which the CLI reads only since 1.1.32; an older CLI takes it only as an
+  argument and refuses the redeem. A dispatch that packages an older release
+  with this tree therefore starts only for an account that already has time,
+  or with `WARREN_ALLOW_INACTIVE=on`.
 - The image needs `--cap-add NET_ADMIN` and `--device /dev/net/tun`; it uses
   nftables inside its own namespace and never touches the host firewall.
 - DNS inside the namespace is rewritten to the in-tunnel resolver by the

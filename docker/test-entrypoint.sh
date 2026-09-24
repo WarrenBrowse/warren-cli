@@ -649,5 +649,22 @@ check "and the read is bounded" \
 : > "$TMP/identity-out"
 check "a read that produced nothing is not an identity" "" "$(stored_identity)"
 
+echo "how the voucher reaches the CLI"
+# An argument of an exec'd command is readable in /proc by every process of
+# the container for as long as the command runs; standard input is not. The
+# CLI reads the code from stdin when the argument is left out, the way the
+# recovery phrase already goes to `account login`.
+warren_cli() {
+	printf '%s\n' "$*" > "$TMP/redeem-args"
+	cat > "$TMP/redeem-stdin"
+	return "${REDEEM_RC:-0}"
+}
+REDEEM_RC=0
+check_true "a redeem the CLI accepts succeeds" redeem_voucher 'WRN-CODE-1234'
+check "the code is not on the command line" "account redeem" "$(cat "$TMP/redeem-args")"
+check "the code goes in on standard input" "WRN-CODE-1234" "$(cat "$TMP/redeem-stdin")"
+REDEEM_RC=1
+check_fails "a redeem the CLI refuses fails" redeem_voucher 'WRN-CODE-1234'
+
 printf '\n%d checks, %d failure(s)\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]

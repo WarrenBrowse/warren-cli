@@ -166,6 +166,14 @@ stored_identity() {
     timeout 10 /usr/bin/warren warren mnemonic export 2>/dev/null | tail -1
 }
 
+# The code goes in on standard input, like the recovery phrase to
+# `account login`: an argument of the exec'd CLI would be readable in /proc by
+# every process of the container while the redeem runs. printf is a shell
+# builtin, so the code is never an argument of any process.
+redeem_voucher() { # <code>
+    printf '%s\n' "$1" | warren_cli account redeem >/dev/null 2>&1
+}
+
 # Why the connect failed, from the status `timeout(1)` returned. 124 is the
 # one status that means the command was still running when the budget ran
 # out; everything else is the CLI refusing in its own time, and calling that a
@@ -603,10 +611,7 @@ fi
 MNEMONIC=""
 
 if [ -n "$VOUCHER" ]; then
-    # The CLI this image packages (up to 1.1.31) takes the code only as an
-    # argument, so it is visible in /proc for the length of the call. The next
-    # release reads it from stdin; docs/DOCKER.md says when this changes.
-    if warren_cli account redeem "$VOUCHER" >/dev/null 2>&1; then
+    if redeem_voucher "$VOUCHER"; then
         log "voucher redeemed"
     else
         log "WARNING: voucher redeem failed (already used, or invalid)"
